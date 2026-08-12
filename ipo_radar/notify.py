@@ -68,9 +68,12 @@ def _notify_osascript(title, subtitle, message, sound):
         return False
 
 
-def _notify_terminal_notifier(title, subtitle, message, sound, open_target):
+def _notify_terminal_notifier(title, subtitle, message, sound, open_target, group):
+    # The group id must be UNIQUE per deal: terminal-notifier REPLACES any
+    # existing notification sharing a group, so a single "ipo-radar" group would
+    # silently collapse a three-GO morning down to one surviving banner.
     cmd = [_TN, "-title", title, "-subtitle", subtitle, "-message", message,
-           "-group", "ipo-radar"]
+           "-group", group or "ipo-radar"]
     if sound:
         cmd += ["-sound", sound]
     if open_target:
@@ -84,11 +87,11 @@ def _notify_terminal_notifier(title, subtitle, message, sound, open_target):
         return False
 
 
-def notify(title, subtitle, message, sound="Glass", open_target=None):
-    # type: (str, str, str, Optional[str], Optional[str]) -> bool
-    """Post a banner. ``open_target`` is honoured only via terminal-notifier."""
+def notify(title, subtitle, message, sound="Glass", open_target=None, group=None):
+    # type: (str, str, str, Optional[str], Optional[str], Optional[str]) -> bool
+    """Post a banner. ``open_target`` and ``group`` need terminal-notifier."""
     if _TN:
-        return _notify_terminal_notifier(title, subtitle, message, sound, open_target)
+        return _notify_terminal_notifier(title, subtitle, message, sound, open_target, group)
     return _notify_osascript(title, subtitle, message, sound)
 
 
@@ -123,5 +126,6 @@ def notify_go(rec, verdict=None, report_path=None):
         ),
         message="증권사: %s" % brokers,
         open_target=target,
+        group="ipo-radar-%s" % (rec.get("no") or rec.get("name") or "?"),
     )
 
