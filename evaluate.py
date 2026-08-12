@@ -141,6 +141,10 @@ def main():
     models = [
         ("A global median", baseline_global),
         ("B hard bins [INCUMBENT]", baseline_hardbin),
+        # Whatever run.py actually uses, so the table always scores the shipped
+        # model rather than a neighbour of it. Reads forecast.DEFAULT directly:
+        # retuning that config retunes this row.
+        ("S kernel h=%.1f [SHIPPED]" % forecast.DEFAULT["bandwidth"], kernel(forecast.DEFAULT)),
         ("C kernel h=1.0", kernel({"features": ("linst", "lock"), "bandwidth": 1.0})),
         ("D kernel h=0.7", kernel({"features": ("linst", "lock"), "bandwidth": 0.7})),
         ("E kernel h=1.5", kernel({"features": ("linst", "lock"), "bandwidth": 1.5})),

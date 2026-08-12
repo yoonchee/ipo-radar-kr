@@ -33,11 +33,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from ipo_radar import fetch, parse, render_net
+from ipo_radar import fetch, parse, render_net, score
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.path.join(ROOT, "state", "cache", "detail")
 SRC = os.path.join(ROOT, "state", "backtest", "latest.json")
+DATASET = os.path.join(ROOT, "state", "cache", "dataset.json")
 
 MARGIN_RATE_DEFAULT = 0.50   # 일반청약자 청약증거금율; parsed per deal, this is the fallback
 EQUAL_POOL_SHARE = 0.50      # 균등 is >= 50% of the 일반청약자 pool by rule since 2021
@@ -82,6 +83,8 @@ def extract(no):
         "margin": margin,
         "limit": limit,
         "retail_pool": retail_pool,
+        "subscription_start": rec.get("subscription_start"),
+        "tenor3": score.long_tenor_share(rec.get("lockup_breakdown") or {}),
         "subscription_end": rec.get("subscription_end"),
         "refund_date": rec.get("refund_date"),
         "final_price": rec.get("final_price"),
@@ -130,6 +133,9 @@ def compute(deal, ec, rate, subscribers):
         "cost": cost, "net": gain - cost, "limit": limit, "price": price,
         "prop_ratio": prop, "broker": ec["broker"],
         "equal_split": ec.get("equal_split"),
+        # Carried for the forecast dataset, not used by the 실질손익 report.
+        "sub_start": ec.get("subscription_start"), "tenor3": ec.get("tenor3"),
+        "pool": ec.get("retail_pool"),
     }
 
 
@@ -165,6 +171,52 @@ def _bucket(items):
         "capital_years": cap_years,
         "excess_return": (100.0 * sum(net) / cap_years) if cap_years else 0.0,
     }
+
+
+BAND_POS = {"above": 2, "top": 1, "within": 0, "bottom": -1}
+
+
+def build_dataset(rows):
+    """The analogue set `forecast.py` learns from, and `evaluate.py` validates on.
+
+    This is the only writer of `state/cache/dataset.json`. It is a projection of
+    the same rows the 실질손익 report is built from, reshaped to what the forecast
+    needs: the features it kernel-weights on (기관경쟁률, 확약, and the tenor/band
+    fields kept for re-testing), and the two outcomes it draws jointly -- the
+    retail-enthusiasm multiple `mult` and the opening move `ret`.
+
+    Two invariants matter more than they look:
+
+    * **비례 only, always.** `shares` and `net` are recomputed from `shares_prop`
+      even when --subscribers assumed a 균등 allocation, so the dataset does not
+      change shape with the flag. `forecast.predict` adds 균등 itself via
+      `equal_shares`; baking an assumed one in here would double-count it.
+    * **`mult` = 비례경쟁률 / 기관경쟁률** -- how much harder retail competed than
+      institutions did. It is the whole reason the forecast can turn a 수요예측
+      number into an allocation, and it is drawn jointly with that deal's `ret`.
+
+    Deals missing 기관경쟁률 or 청약일 are dropped: without them there is no
+    feature to weight on and no way to date the leakage cutoff.
+    """
+    out = []
+    for r in rows:
+        inst, prop = r.get("ratio"), r["prop_ratio"]
+        if not inst or not prop or not r.get("sub_start"):
+            continue
+        shares = r["shares_prop"]
+        gain = shares * r["price"] * (r["ret"] / 100.0)
+        out.append({
+            "no": r["no"], "name": r["name"],
+            "sub_start": r["sub_start"], "listing": r["listing_date"],
+            "inst": inst, "lock": r.get("lockup") or 0.0,
+            "tenor3": r.get("tenor3"), "bpos": BAND_POS.get(r.get("band_position"), 0),
+            "limit": r["limit"], "price": r["price"], "pool": r.get("pool"),
+            "days": r["days"], "capital": r["capital"], "cost": r["cost"],
+            "mult": prop / inst, "prop": prop,
+            "ret": r["ret"], "net": gain - r["cost"], "shares": shares,
+        })
+    out.sort(key=lambda d: d["sub_start"])
+    return out
 
 
 def build_payload(rows, args):
@@ -217,7 +269,9 @@ def main():
         if "skip" in r:
             skipped.append((d["name"], r["skip"]))
             continue
-        r.update(name=d["name"], verdict=d["verdict"], ret=d["ret"], listing_date=d["listing_date"])
+        r.update(name=d["name"], verdict=d["verdict"], ret=d["ret"], listing_date=d["listing_date"],
+                 no=d["no"], ratio=d.get("ratio"), lockup=d.get("lockup"),
+                 band_position=d.get("band_position"))
         rows.append(r)
         if i % 25 == 0:
             sys.stderr.write("  %d/%d\r" % (i, len(deals)))
@@ -268,6 +322,16 @@ def main():
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(data)
         written.append(path)
+
+    # The forecast's analogue set. Written here because this is the only place
+    # that has both halves of it: the 수요예측 features from the backtest and the
+    # realised allocation from the detail pages.
+    dataset = build_dataset(rows)
+    os.makedirs(os.path.dirname(DATASET), exist_ok=True)
+    with open(DATASET, "w", encoding="utf-8") as fh:
+        json.dump(dataset, fh, ensure_ascii=False, indent=2)
+    written.append("%s  (%d deals for forecast.py)" % (DATASET, len(dataset)))
+
     print("\nWrote:")
     for w in written:
         print("  %s" % w)

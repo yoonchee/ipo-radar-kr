@@ -210,17 +210,97 @@ but pool size cannot give shares per person. Every figure above is therefore a
 conclusion. Before fees and tax; assumes one broker, no capital reuse across
 overlapping deals.
 
+## 기대손익 — the forecast
+
+The buckets above are retrospective. For a deal that is open *right now*, the report
+adds an expected net-won estimate: what this subscription is likely to pay, in won,
+with an honest interval around it.
+
+```
+| 종목 | 투입증거금 | 예상배정 | 기대손익 | 90% 신뢰구간 | 흑자확률 |
+| 니어스랩 | 26,780만 | 8주 | -5,456원 | -115,646원 ~ +76,489원 | 60% |
+```
+
+At the moment 수요예측 publishes, two unknowns stand between a verdict and a cash
+outcome: how hard *retail* will compete (which sets your allocation) and where the
+stock opens. `forecast.py` estimates both by kernel-weighting past deals in
+(log 기관경쟁률, 의무보유확약), and draws each analogue's retail-enthusiasm multiple
+and opening move **jointly** — never averaging them separately, because their
+correlation is the whole signal. A hot deal fills you with three shares; a cold one
+fills you with eight hundred right before it falls.
+
+### Rebuilding the analogue set
+
+The forecast reads `state/cache/dataset.json`, which `net_returns.py` writes as a
+by-product. `state/` is gitignored, so on a fresh checkout that file does not exist
+and **the daily report simply omits the 기대손익 section** — the screen never depends
+on it. To build or refresh it:
+
+```bash
+python3 backtest.py --pages 18     # 1. 수요예측 features + realised 시초/공모
+python3 net_returns.py --rate 3.0  # 2. joins detail pages -> dataset.json
+python3 evaluate.py                # 3. optional: re-check the model walk-forward
+```
+
+Step 2 needs one detail page per deal, cached under `state/cache/detail/` — the first
+run makes ~240 requests at 1s apart, later runs are nearly instant. The dataset is
+**비례 only** regardless of `--subscribers`; `forecast.py` adds any 균등 assumption
+itself, so baking one in would double-count it.
+
+Worth re-running every few months. The daily screen keeps using whatever dataset is
+on disk, so a stale one quietly scores new deals against an aging comparison set.
+
+### Why it stays this simple
+
+`evaluate.py` is the reason to trust any of it: walk-forward, time-ordered, and an
+analogue counts only if its **listing** date precedes the target's *subscription*
+date. A deal that had subscribed but not yet listed has no outcome to learn from.
+
+Scored over the 160 deals every variant could predict (`python3 evaluate.py`):
+
+| variant | MAE(만) | rank corr |
+|---|---:|---:|
+| hard-bin comparables *(the original)* | 62.2 | 0.307 |
+| global median | 43.2 | 0.360 |
+| **kernel, 2 features, h=0.6 — shipped** | **40.6** | **0.460** |
+| kernel + 3개월 tenor share | 44.4 | 0.418 |
+| kernel + band position | 42.0 | 0.364 |
+| kernel + recency decay | 41.8 | 0.315 |
+
+Hard bins were the worst thing tested — smooth weighting wins because it uses all 234
+deals rather than the 43 that fall inside a bin. No third feature beat the shipped
+model on either metric. Two features is not laziness, it is the measured optimum at
+n=234; a third needs a walk-forward win, not a plausible story.
+
+The bandwidth is deliberately *not* the argmax. MAE is flat across the whole sweep and
+only rank correlation moves, monotonically, so the peak is the edge of a noisy curve —
+0.6 rests on ~61 effective neighbours instead of ~31.
+
+**Read this before trusting an EV:**
+
+- **It is only calibrated at 기관경쟁률 ≥ 600.** There the bias is +2.5만 and terciles
+  are monotonic. Below 300 the bias is +178.9만 — weak demand means a huge allocation,
+  and 28 historical examples cannot pin that tail down. The report prints a warning
+  rather than a number it cannot stand behind.
+- **The interval is the point.** For 니어스랩 the EV was −5,456원 against a CI of
+  roughly ±100,000원. The point estimate alone would be a lie of precision.
+- ~17 variants were scored against the same walk-forward sequence, which is selection
+  on the holdout. That is why the bar for adopting one was "materially beats the
+  incumbent", not "best marginal edge".
+
 ## Layout
 
 ```
 run.py               entry point — screen, report, notify
 backtest.py          threshold calibration against realised 시초/공모
-net_returns.py       실질손익 — won earned net of opportunity cost
+net_returns.py       실질손익 — won earned net of opportunity cost; writes dataset.json
+evaluate.py          walk-forward validation of the forecast model
 config.json          thresholds
 ipo_radar/
   fetch.py           HTTP + EUC-KR decode, polite 1s delay, retries
   parse.py           38.co.kr parsers (label-keyed, not position-keyed)
   score.py           GO/WATCH/PASS rules
+  forecast.py        expected net won from kernel-weighted analogues
   notify.py          macOS notifications via osascript
   report.py          markdown rendering (daily screen)
   render_backtest.py HTML rendering (시초/공모 backtest)
@@ -229,6 +309,9 @@ state/
   latest.md          most recent report
   reports/           dated archive
   seen.json          dedupe — each deal alerts once
+  backtest/          calibration output (JSON + HTML)
+  cache/detail/      one 38.co.kr detail page per past deal
+  cache/dataset.json the forecast's analogue set — rebuilt by net_returns.py
 ```
 
 ## Maintenance

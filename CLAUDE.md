@@ -33,8 +33,15 @@ python3 run.py --all --no-notify   # the dev loop: score everything, no notifica
 python3 run.py                     # normal run: lead-time window only, notifies new GOs
 python3 run.py --force             # re-notify deals already alerted
 python3 backtest.py --pages 18     # re-calibrate thresholds against realised outcomes
+python3 net_returns.py --rate 3.0  # 실질손익 + rebuilds state/cache/dataset.json
+python3 evaluate.py                # walk-forward check on the forecast model
 cat state/latest.md                # most recent report
 ```
+
+`dataset.json` is what `forecast.py` learns from and `evaluate.py` validates, and
+`net_returns.py` is its only writer — run `backtest.py` first, since it reads that
+output. `state/` is gitignored, so on a fresh checkout the file is absent and the
+daily report silently omits its 기대손익 section until you rebuild it.
 
 There is **no test suite**. Verification is by running against the live site and eyeballing
 the parse — `--all --no-notify` is the safe way to do that. When changing `parse.py`, check
@@ -132,11 +139,14 @@ outcome to learn from. Getting this wrong invalidates everything downstream.
 What the harness established, and what you should not undo:
 
 - **Hard-bin comparables were the worst model tested** (MAE 62.2만 vs ~41 for
-  everything else, rank corr 0.307 vs 0.534). Smooth kernel weighting beat it because
+  everything else, rank corr 0.307 vs 0.460). Smooth kernel weighting beat it because
   it uses all 234 deals instead of 43 in-or-out.
-- **Every extra feature made it worse.** 3개월+ tenor share, band position, and
-  recency decay each *lowered* rank correlation. Two features is not laziness; it is
-  the measured optimum at n=234. Adding a third needs a walk-forward win, not a
+- **No third feature beat the shipped model on either metric.** 3개월+ tenor share,
+  band position, and recency decay all scored worse than it on both MAE and rank
+  correlation. Against their own h=1.0 base the picture is mixed — tenor3 raises rho
+  while worsening MAE, recency does the reverse — which is exactly the noise the
+  "materially beats" bar exists to filter. Two features is not laziness; it is the
+  measured optimum at n=234. Adding a third needs a walk-forward win, not a
   plausible story.
 - **Bandwidth 0.6 is deliberately not the argmax.** MAE was flat across the whole
   sweep and only rank correlation moved, monotonically — so the peak is the edge of a
