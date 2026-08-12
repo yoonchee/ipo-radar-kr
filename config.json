@@ -1,0 +1,11 @@
+{
+  "go_institutional_ratio": 600.0,
+  "watch_institutional_ratio": 300.0,
+  "go_lockup_pct": 10.0,
+  "watch_lockup_pct": 5.0,
+  "strong_long_tenor_share": 0.30,
+  "require_price_at_band_top": true,
+  "include_spac": false,
+  "include_konex": false,
+  "alert_lead_days": 10
+}

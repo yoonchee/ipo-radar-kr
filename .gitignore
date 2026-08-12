@@ -1,0 +1,10 @@
+# Machine-local output: reports, alert dedupe state, launchd logs.
+# Regenerated on every run — nothing here belongs to another machine.
+state/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# macOS
+.DS_Store
