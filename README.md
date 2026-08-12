@@ -82,8 +82,20 @@ Thresholds live in `config.json`.
 sell into the opening auction.
 
 ```bash
-python3 backtest.py --pages 18
+python3 backtest.py --pages 18            # writes JSON + HTML, prints the summary
+python3 backtest.py --pages 18 --no-write  # stdout only
+open state/backtest/latest.html            # the visual report
 ```
+
+It persists results to `state/backtest/`, dated plus a `latest` copy of each:
+
+| File | What it's for |
+|---|---|
+| `latest.json` | Full dataset — every deal with its verdict, score, and the reasons behind it, plus all aggregates and the config used. Machine-readable, for re-analysis without re-scraping. |
+| `latest.html` | Self-contained visual report — verdict comparison, a 기관경쟁률-vs-return scatter of every deal, win rate by bucket, and the full sortable table. Opens straight from disk, no server or network needed. |
+
+`state/` is gitignored, so these are local artifacts. Commit one deliberately if you
+want a versioned record of what justified a threshold change.
 
 Over **243 non-SPAC deals, 2023-03 → 2026-08**:
 
@@ -142,7 +154,8 @@ ipo_radar/
   parse.py           38.co.kr parsers (label-keyed, not position-keyed)
   score.py           GO/WATCH/PASS rules
   notify.py          macOS notifications via osascript
-  report.py          markdown rendering
+  report.py          markdown rendering (daily screen)
+  render_backtest.py HTML rendering (backtest report)
 state/
   latest.md          most recent report
   reports/           dated archive
