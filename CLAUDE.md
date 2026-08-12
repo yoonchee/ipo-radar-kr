@@ -117,6 +117,41 @@ Two consequences, both already encoded:
 `net_returns.py` caches detail pages under `state/cache/` — it needs one fetch per deal, so
 the first full run makes ~240 requests. Never drop the cache or the 1s delay.
 
+## The forecast model — and why it stays this simple
+
+`forecast.py` estimates expected net won for a live deal by kernel-weighting past
+deals in (log 기관경쟁률, 의무보유확약) and drawing each analogue's retail-enthusiasm
+multiple and opening move **jointly** — never averaging them separately, since their
+correlation is the signal.
+
+`evaluate.py` is the reason to trust any of it. Walk-forward, time-ordered, and the
+leakage rule is subtle: an analogue counts only if its **listing date** precedes the
+target's *subscription* date. A deal that had subscribed but not yet listed has no
+outcome to learn from. Getting this wrong invalidates everything downstream.
+
+What the harness established, and what you should not undo:
+
+- **Hard-bin comparables were the worst model tested** (MAE 62.2만 vs ~41 for
+  everything else, rank corr 0.307 vs 0.534). Smooth kernel weighting beat it because
+  it uses all 234 deals instead of 43 in-or-out.
+- **Every extra feature made it worse.** 3개월+ tenor share, band position, and
+  recency decay each *lowered* rank correlation. Two features is not laziness; it is
+  the measured optimum at n=234. Adding a third needs a walk-forward win, not a
+  plausible story.
+- **Bandwidth 0.6 is deliberately not the argmax.** MAE was flat across the whole
+  sweep and only rank correlation moved, monotonically — so the peak is the edge of a
+  noisy curve. 0.6 rests on ~61 effective neighbours instead of ~31.
+- **The model is only calibrated at 기관경쟁률 >= 600** (`CALIBRATED_MIN_INST`). There
+  bias is +2.5만 and terciles are monotonic. Below 300 bias is +178.9만 — weak demand
+  means a huge allocation, and 28 examples cannot pin that tail down. Never quote an
+  EV for a low-competition deal without the warning the report already prints.
+- Always show the bootstrap CI. For 니어스랩 the EV was -5,456원 against a CI of
+  ±100,000원; the point estimate alone would have been a lie of precision.
+
+Note the caveat the numbers cannot remove: ~17 variants were scored against the same
+walk-forward sequence, which is selection on the holdout. That is why the bar was
+"materially beats the incumbent", not "best marginal edge".
+
 ## Etiquette toward the source
 
 38.co.kr is a small site run for retail investors, and its `robots.txt` permits crawling.

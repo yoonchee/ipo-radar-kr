@@ -12,6 +12,20 @@ def _won(n: Optional[int]) -> str:
     return "{:,}".format(n) if n else "-"
 
 
+def _man(v, sign: bool = False) -> str:
+    """Won in 만원 — the scale a person reasons in. For big figures only."""
+    if v is None:
+        return "-"
+    return ("{:+,.0f}만" if sign else "{:,.0f}만").format(v / 10000.0)
+
+
+def _won_signed(v) -> str:
+    """Raw 원 for small figures: rounding an EV of -5,456 to '-1만' destroys it."""
+    if v is None:
+        return "-"
+    return "{:+,.0f}원".format(v)
+
+
 def _headline_reason(reasons: List[str]) -> str:
     """For a rejected deal, the blocker is the interesting line, not the first."""
     blocked = [r for r in reasons if r.startswith("⚠")]
@@ -79,6 +93,27 @@ def render(results: List[Dict], run_date: str) -> str:
                 )
             )
         L.append("")
+
+        if any(r.get("forecast") for r in go + watch):
+            L.append("### 기대손익 (실질)")
+            L.append("")
+            L.append("최대 청약한도로 청약했을 때의 예상 손익. 배정은 비례만 계산한 하한값이며, "
+                     "기회비용은 연 3% 기준입니다.")
+            L.append("")
+            L.append("| 종목 | 투입증거금 | 예상배정 | 기대손익 | 90% 신뢰구간 | 흑자확률 |")
+            L.append("|---|---:|---:|---:|---|---:|")
+            for r in go + watch:
+                f = r.get("forecast")
+                if not f:
+                    continue
+                L.append("| %s | %s | %d주 | %s | %s ~ %s | %.0f%% |"
+                         % (r["rec"].get("name"), _man(f["capital"]), f["shares_med"],
+                            _won_signed(f["ev"]), _won_signed(f["ev_lo"]),
+                            _won_signed(f["ev_hi"]), f["win_prob"]))
+            L.append("")
+            if any(not r["forecast"].get("calibrated") for r in go + watch if r.get("forecast")):
+                L.append("> ⚠ 기관경쟁률 600:1 미만인 종목의 기대손익은 검증 구간 밖이라 신뢰할 수 없습니다.")
+                L.append("")
 
         L.append("### 판정 근거")
         L.append("")

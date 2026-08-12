@@ -23,7 +23,7 @@ import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from ipo_radar import fetch, notify, parse, report, score
+from ipo_radar import fetch, forecast, notify, parse, report, score
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 STATE_DIR = os.path.join(ROOT, "state")
@@ -76,6 +76,48 @@ def select_candidates(schedule, cfg, today, take_all=False):
     return out
 
 
+DATASET = os.path.join(STATE_DIR, "cache", "dataset.json")
+
+
+def attach_forecasts(results):
+    """Add an expected-net-won estimate to GO/WATCH deals, where we can.
+
+    Silently skipped when the historical dataset has not been built (it needs
+    one cached detail page per past deal -- see net_returns.py), so the daily
+    screen never depends on it.
+    """
+    if not os.path.exists(DATASET):
+        return
+    try:
+        with open(DATASET, encoding="utf-8") as fh:
+            history = json.load(fh)
+    except ValueError:
+        return
+    for r in results:
+        if r["verdict"]["verdict"] not in ("GO", "WATCH"):
+            continue
+        rec = r["rec"]
+        limit = max([u.get("limit_high") or 0 for u in rec.get("underwriters", [])] or [0])
+        price, sub_end, refund = rec.get("final_price"), rec.get("subscription_end"), rec.get("refund_date")
+        if not (limit and price and sub_end and refund and rec.get("institutional_ratio")):
+            continue
+        d0 = datetime.date(*[int(x) for x in sub_end.split("-")])
+        d1 = datetime.date(*[int(x) for x in refund.split("-")])
+        days = max((d1 - d0).days, 1)
+        capital = limit * price * 0.5
+        target = {
+            "no": rec["no"], "sub_start": rec.get("subscription_start") or sub_end,
+            "inst": rec["institutional_ratio"], "lock": rec.get("lockup_pct") or 0.0,
+            "limit": limit, "price": price, "days": days,
+            "capital": capital, "cost": capital * 0.03 * days / 365.0,
+        }
+        hist = [h for h in history if h["listing"] < target["sub_start"]]
+        p = forecast.predict(target, hist, bootstrap=800)
+        if p:
+            p["capital"] = capital
+            r["forecast"] = p
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--all", action="store_true", help="ignore the lead-time window")
@@ -113,6 +155,8 @@ def main():
             rec["subscription_start"] = row["subscription_start"]
             rec["subscription_end"] = row["subscription_end"]
         results.append({"rec": rec, "verdict": score.evaluate(rec, cfg)})
+
+    attach_forecasts(results)
 
     os.makedirs(REPORT_DIR, exist_ok=True)
     md = report.render(results, run_date)
