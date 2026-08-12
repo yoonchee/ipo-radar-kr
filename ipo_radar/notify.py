@@ -125,14 +125,3 @@ def notify_go(rec, verdict=None, report_path=None):
         open_target=target,
     )
 
-
-def notify_summary(n_go, n_watch, report_path):
-    """Daily roll-up. Clicking opens the markdown report, where supported."""
-    return notify(
-        title="공모주 레이더",
-        subtitle="GO %d · WATCH %d" % (n_go, n_watch),
-        # Only promise a click when the click actually does something.
-        message="리포트 열기" if _TN else "state/latest.md 확인",
-        sound=None if n_go == 0 else "Glass",
-        open_target=report_path,
-    )

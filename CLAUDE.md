@@ -94,9 +94,28 @@ Two things to keep in mind before re-fitting anything:
   open, so the screen's job is avoiding the bad tail, not finding rare winners. Judge changes
   by what they do to the PASS bucket, not just the GO bucket.
 
-There is no allocation modelling — 배정 is pro-rata (균등/비례), so a high-scoring deal where
-you got three shares can be worth less in cash than a mediocre one where you got filled. The
-tool ranks quality, not expected won. Don't present its output as expected profit.
+## 시초/공모 percentages are not money — use net_returns.py
+
+`backtest.py` measures the price move. `net_returns.py` measures the trade, and the two
+disagree about the headline. Subscribing at max 청약한도 to *every* deal loses 1,857만 won
+over the sample despite 86% of deals rising at the open, because 증거금 (50% of 청약한도 ×
+확정공모가) sits idle from 청약일 to 환불일, and because weak deals — the ones nobody wants —
+fill you with hundreds of shares right before they fall. GO earns +10.01% excess return;
+PASS earns −22.80%.
+
+Two consequences, both already encoded:
+
+- **WATCH does not notify.** It measured +0.03% excess return over 69 deals, which is zero.
+  `run.py` raises a banner only for a newly-GO deal. Don't "fix" this by restoring a summary
+  notification.
+- **배정 is 비례 only** — `floor(청약한도 / 비례경쟁률)`. 균등 is excluded because 청약건수 is
+  published nowhere on 38.co.kr. The 50/50 pool split *is* derivable as `1 − 통합률/비례률`
+  (holds for 235/237 deals), but pool size cannot give shares per person, so every net
+  figure is a floor. Don't invent a 청약건수 to "complete" it; the sensitivity is ±10–15%
+  and changes no conclusion.
+
+`net_returns.py` caches detail pages under `state/cache/` — it needs one fetch per deal, so
+the first full run makes ~240 requests. Never drop the cache or the 1s delay.
 
 ## Etiquette toward the source
 

@@ -69,9 +69,8 @@ Installing `terminal-notifier` gives banners a real click target:
 brew install terminal-notifier
 ```
 
-With it, clicking a GO alert opens that deal's 38.co.kr page, and clicking the daily
-summary opens the report. It is entirely optional — the screen detects it at runtime
-and falls back to plain banners when absent.
+With it, clicking a GO alert opens that deal's 38.co.kr page. It is entirely optional
+— the screen detects it at runtime and falls back to plain banners when absent.
 
 `notify.py` looks for it at the Homebrew prefixes directly rather than trusting
 `PATH`: launchd starts jobs with a minimal `PATH` that excludes both prefixes, so a
@@ -91,6 +90,9 @@ Three signals, all knowable *before* the subscription window opens:
 
 Verdicts: **GO** (score ≥ 6, no blockers) · **WATCH** (≥ 3) · **PASS** · **PENDING**
 (수요예측 not published yet) · **EXCLUDED** (스팩/코넥스).
+
+**Only a new GO raises a notification.** WATCH appears in the report but never
+interrupts — see [실질손익](#실질손익-net-won) for why.
 
 A deal is blocked outright — never GO — if 기관경쟁률 is under 300, or if the price
 failed to reach the band top.
@@ -159,17 +161,61 @@ more shots on goal is the better trade.
   thresholds should be re-derived.
 - **A high baseline flatters everything.** 86% of *all* deals were profitable at the
   open. The screen's value is avoiding the bad tail, not finding rare winners.
-- **No allocation modelling.** 배정 is pro-rata against retail demand (균등/비례), so
-  a hot deal returning +150% on a handful of allocated shares may be worth less in
-  cash than a lukewarm one where you got filled. This tool ranks *quality*, not
-  expected won.
+- **These percentages are not money.** 배정 is pro-rata, so a +150% deal where you were
+  filled for three shares can be worth less in cash than a mediocre one where you were
+  filled heavily — and the 증거금 earns nothing while it is tied up. See
+  [실질손익](#실질손익-net-won), which models the actual cash outcome and reverses the
+  headline: subscribing to everything *loses* money.
 - Returns are before fees and tax, and assume you actually sell at the open.
+
+## 실질손익 (net won)
+
+시초/공모 measures the price move, not the trade. Subscribing means committing 증거금
+(50% of 청약한도 × 확정공모가) from the 청약일 to the 환불일, earning nothing meanwhile —
+and on a hot deal an 억-won commitment buys a handful of shares.
+
+```bash
+python3 net_returns.py --rate 3.0                  # writes net-latest.{json,html}
+python3 net_returns.py --rate 3.0 --subscribers 150000   # add an assumed 균등
+open state/backtest/net-latest.html
+```
+
+Over the same 234 deals, at maximum 청약한도 and a 3%/yr opportunity cost:
+
+| Bucket | n | 순손익 | 초과수익률¹ | 평균 배정 |
+|---|---:|---:|---:|---:|
+| **GO** | 114 | **+1,581만** | **+10.01%** | 16주 |
+| WATCH | 69 | +4만 | +0.03% | 39주 |
+| PASS | 51 | −3,442만 | −22.80% | 884주 |
+| *전 종목* | 234 | **−1,857만** | −4.33% | 212주 |
+
+¹ Won per won-year of capital committed, *on top of* the 3% it would have earned idle.
+
+**Subscribing to everything loses money** — 86% of deals rose at the open, and the
+strategy still ends 1,857만 down. The losses concentrate where competition was weak:
+nobody wanted those deals, so you were filled with hundreds of shares, and they fell.
+노머스 (비례 5:1) returned 3,300 shares on 24,915만 committed at −29% — a single
+2,875만 loss.
+
+This is also why WATCH does not notify: **+0.03% excess return is zero**, before the
+friction of moving funds.
+
+### What is measured vs assumed
+
+배정 is **비례 only**: `floor(청약한도 / 비례경쟁률)`, both published per deal. 균등 is
+excluded because 청약건수 (how many people subscribed) is published nowhere. The
+50/50 pool split *is* derivable as `1 − 통합률/비례률` and holds for 235 of 237 deals,
+but pool size cannot give shares per person. Every figure above is therefore a
+**floor**; a plausible 균등 adds roughly 10–15% to the GO net and changes no
+conclusion. Before fees and tax; assumes one broker, no capital reuse across
+overlapping deals.
 
 ## Layout
 
 ```
 run.py               entry point — screen, report, notify
-backtest.py          threshold calibration against realised outcomes
+backtest.py          threshold calibration against realised 시초/공모
+net_returns.py       실질손익 — won earned net of opportunity cost
 config.json          thresholds
 ipo_radar/
   fetch.py           HTTP + EUC-KR decode, polite 1s delay, retries
@@ -177,7 +223,8 @@ ipo_radar/
   score.py           GO/WATCH/PASS rules
   notify.py          macOS notifications via osascript
   report.py          markdown rendering (daily screen)
-  render_backtest.py HTML rendering (backtest report)
+  render_backtest.py HTML rendering (시초/공모 backtest)
+  render_net.py      HTML rendering (실질손익 backtest)
 state/
   latest.md          most recent report
   reports/           dated archive

@@ -137,11 +137,13 @@ def main():
             {"verdict": "WATCH", "name": r["rec"]["name"], "seen": run_date}
         )
 
+    # Only a new GO is worth interrupting for. net_returns.py measured WATCH at
+    # +0.03% excess return over 69 deals -- indistinguishable from leaving the
+    # cash alone, and that is before the friction of actually moving funds. So
+    # WATCH stays visible in the report and never raises a banner.
     if not args.no_notify:
         for r in fresh:
             notify.notify_go(r["rec"], r["verdict"], report_path)
-        if not fresh and (gos or watches):
-            notify.notify_summary(len(gos), len(watches), report_path)
     save_seen(seen)
 
     print("%s — scored %d, GO %d (new %d), WATCH %d" % (run_date, len(results), len(gos), len(fresh), len(watches)))
