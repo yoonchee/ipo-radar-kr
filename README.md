@@ -8,6 +8,13 @@ something clears the bar.
 **Decision support only.** It never logs into a brokerage, moves funds, or places an
 order. You decide how much to subscribe for and where.
 
+> **Not investment advice.** This is a personal tool published as-is. The backtest
+> numbers below are historical and describe a specific market regime that may not
+> persist; past results do not predict future ones. Nothing here is a recommendation
+> to buy or sell any security, and 공모주 subscriptions can and do lose money. If you
+> use it, you own the outcome — read [the caveats](#read-this-before-trusting-those-numbers)
+> before trusting any figure in this README.
+
 ## Why scraping
 
 There is no API — official or commercial — that exposes 기관경쟁률.
@@ -34,16 +41,20 @@ Requires nothing but the system Python 3 that ships with macOS.
 
 ### Scheduling
 
+The plist ships as a template with the install path as a placeholder, so substitute
+your checkout directory when copying it:
+
 ```bash
-cp launchd/com.yoonchee.ipo-radar.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.yoonchee.ipo-radar.plist
+sed "s|__RADAR_DIR__|$PWD|g" launchd/com.ipo-radar.plist.template \
+  > ~/Library/LaunchAgents/com.ipo-radar.plist
+launchctl load ~/Library/LaunchAgents/com.ipo-radar.plist
 ```
 
 Runs at 09:00 and 18:30. 확정공모가 and 기관경쟁률 are published the evening after
 수요예측 closes — a few business days before 청약 opens — so the evening run is the
 one that usually fires first.
 
-To stop: `launchctl unload ~/Library/LaunchAgents/com.yoonchee.ipo-radar.plist`
+To stop: `launchctl unload ~/Library/LaunchAgents/com.ipo-radar.plist`
 
 ## How it scores
 
