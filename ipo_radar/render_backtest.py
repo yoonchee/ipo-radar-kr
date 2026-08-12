@@ -196,8 +196,9 @@ def _bucket_chart(buckets: Sequence[Dict], title_id: str, value_key: str, label:
     W, H = 720, 260
     pad_l, pad_r, pad_t, pad_b = 46, 16, 22, 54
     pw, ph = W - pad_l - pad_r, H - pad_t - pad_b
-    vmax = max(b[value_key] for b in bs)
-    vmax = max(vmax * 1.15, 1.0)
+    # Win rate is bounded at 100%, so the axis is fixed 0-100 with round ticks.
+    # Scaling to max*1.15 instead would label the gridlines 103% and 112%.
+    vmax = 100.0
     slot = pw / float(len(bs))
     bw = min(56.0, slot - 14)
 
@@ -243,13 +244,18 @@ def _table(rows: List[Dict]) -> str:
     for r in rows:
         band = "%s~%s" % ("{:,}".format(r["band_low"]) if r.get("band_low") else "-",
                           "{:,}".format(r["band_high"]) if r.get("band_high") else "-")
+        # No colour swatch on the verdict here, deliberately: the 시초/공모 column
+        # already uses red/green for good-and-bad, and a green PASS dot sitting
+        # beside a red negative return reads as a contradiction. In the table the
+        # verdict is unambiguous as plain text; colour stays in the charts, where
+        # it encodes series identity rather than sentiment.
         out.append(
-            "<tr><td>%s</td><td class=\"num\">%s</td>"
-            "<td><span class=\"pill\" style=\"background:var(%s)\"></span>%s</td>"
+            "<tr><td>%s</td><td class=\"num nowrap\">%s</td>"
+            "<td class=\"nowrap\">%s</td>"
             "<td class=\"num\">%.2f:1</td><td class=\"num\">%s</td><td class=\"num\">%s</td>"
-            "<td class=\"num\">%s</td><td class=\"num %s\">%s</td></tr>"
+            "<td class=\"num nowrap\">%s</td><td class=\"num %s\">%s</td></tr>"
             % (_esc(r["name"]), _esc(r.get("listing_date") or "-"),
-               SERIES_VAR.get(r["verdict"], "--series-1"), _esc(r["verdict"]),
+               _esc(r["verdict"]),
                r["ratio"], _fmt_pct(r.get("lockup"), 2, sign=False),
                "{:,}".format(r["final_price"]) if r.get("final_price") else "-",
                band, "pos" if r["ret"] > 0 else "neg", _fmt_pct(r["ret"])))
@@ -307,10 +313,11 @@ padding:12px 14px;border-radius:8px;font-size:.85rem;color:var(--text-secondary)
 .tablewrap{overflow-x:auto;border:1px solid var(--border);border-radius:10px;background:var(--surface-1);margin-top:10px}
 table{border-collapse:collapse;width:100%;font-size:.84rem;min-width:660px}
 th{text-align:left;font-weight:600;color:var(--text-secondary);padding:9px 10px;border-bottom:1px solid var(--border);
-position:sticky;top:0;background:var(--surface-1)}
+position:sticky;top:0;background:var(--surface-1);white-space:nowrap}
 td{padding:8px 10px;border-bottom:1px solid var(--border)}
 tr:last-child td{border-bottom:0}
 .num{text-align:right;font-variant-numeric:tabular-nums}
+.nowrap{white-space:nowrap}
 .pos{color:var(--pos)}.neg{color:var(--neg)}
 .pill{width:9px;height:9px;border-radius:3px;display:inline-block;margin-right:6px;vertical-align:middle}
 #tip{position:fixed;pointer-events:none;opacity:0;transition:opacity .1s;background:var(--text-primary);
@@ -341,7 +348,12 @@ def render(payload: Dict) -> str:
     agg = dict(agg)
     agg["config"] = cfg
 
-    parts = ['<title>공모주 백테스트 — GO/WATCH/PASS</title>',
+    # The charset declaration is load-bearing, not boilerplate: the page is full
+    # of Korean labels, and without it a browser falls back to Latin-1 and renders
+    # every one of them as mojibake (공모주 -> ê³µëª¨ì£¼).
+    parts = ['<meta charset="utf-8">',
+             '<meta name="viewport" content="width=device-width,initial-scale=1">',
+             '<title>공모주 백테스트 — GO/WATCH/PASS</title>',
              "<style>%s</style>" % _CSS,
              '<div class="wrap">',
              "<h1>공모주 백테스트</h1>",

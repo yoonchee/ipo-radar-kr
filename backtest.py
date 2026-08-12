@@ -32,7 +32,8 @@ OUT_DIR = os.path.join(ROOT, "state", "backtest")
 
 RATIO_BUCKETS = [(0, 100), (100, 300), (300, 600), (600, 800), (800, 1200), (1200, 10 ** 9)]
 LOCKUP_BUCKETS = [(0, 5, "<5%"), (5, 10, "5~10%"), (10, 20, "10~20%"), (20, 10 ** 9, "≥20%")]
-BAND_POSITIONS = ("above", "top", "within", "bottom")
+BAND_POSITIONS = (("above", "밴드 상단 초과"), ("top", "밴드 상단"),
+                  ("within", "밴드 내"), ("bottom", "밴드 하단"))
 
 
 def _pct(xs):
@@ -160,10 +161,10 @@ def aggregate(rows, cfg):
         if sel:
             label = "%d+" % lo if hi > 10 ** 8 else "%d–%d" % (lo, hi)
             agg["by_ratio_bucket"].append(dict(label=label, **_stats(sel)))
-    for pos in BAND_POSITIONS:
+    for pos, label in BAND_POSITIONS:
         sel = [r["ret"] for r in rows if r["band_position"] == pos]
         if sel:
-            agg["by_band_position"].append(dict(label=pos, **_stats(sel)))
+            agg["by_band_position"].append(dict(label=label, key=pos, **_stats(sel)))
     for lo, hi, label in LOCKUP_BUCKETS:
         sel = [r["ret"] for r in rows if r["lockup"] is not None and lo <= r["lockup"] < hi]
         if sel:
