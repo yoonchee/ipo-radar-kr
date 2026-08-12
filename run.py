@@ -139,7 +139,7 @@ def main():
 
     if not args.no_notify:
         for r in fresh:
-            notify.notify_go(r["rec"], r["verdict"])
+            notify.notify_go(r["rec"], r["verdict"], report_path)
         if not fresh and (gos or watches):
             notify.notify_summary(len(gos), len(watches), report_path)
     save_seen(seen)

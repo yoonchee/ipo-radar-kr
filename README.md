@@ -56,6 +56,28 @@ one that usually fires first.
 
 To stop: `launchctl unload ~/Library/LaunchAgents/com.ipo-radar.plist`
 
+### Clickable notifications (optional)
+
+By default the banner is posted with `osascript`, which attributes it to Script
+Editor. Those banners **carry no click action** — clicking one just activates Script
+Editor, which opens its iCloud document folder. That is an API limitation, not a
+setting, so the built-in path never implies the banner is actionable.
+
+Installing `terminal-notifier` gives banners a real click target:
+
+```bash
+brew install terminal-notifier
+```
+
+With it, clicking a GO alert opens that deal's 38.co.kr page, and clicking the daily
+summary opens the report. It is entirely optional — the screen detects it at runtime
+and falls back to plain banners when absent.
+
+`notify.py` looks for it at the Homebrew prefixes directly rather than trusting
+`PATH`: launchd starts jobs with a minimal `PATH` that excludes both prefixes, so a
+plain `shutil.which()` would find it interactively and silently miss it in the
+scheduled run — the run that matters.
+
 ## How it scores
 
 Three signals, all knowable *before* the subscription window opens:
