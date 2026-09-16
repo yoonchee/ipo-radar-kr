@@ -175,7 +175,6 @@ def main():
         no = r["rec"]["no"]
         if args.force or seen.get(no, {}).get("verdict") != "GO":
             fresh.append(r)
-        seen[no] = {"verdict": "GO", "name": r["rec"]["name"], "notified": run_date}
     for r in watches:
         seen.setdefault(r["rec"]["no"], {}).update(
             {"verdict": "WATCH", "name": r["rec"]["name"], "seen": run_date}
@@ -185,12 +184,31 @@ def main():
     # +0.03% excess return over 69 deals -- indistinguishable from leaving the
     # cash alone, and that is before the friction of actually moving funds. So
     # WATCH stays visible in the report and never raises a banner.
+    #
+    # A GO is recorded in seen.json ONLY once its banner actually posted. The
+    # entry is the record of a delivered alert, not of a deal we noticed: if
+    # delivery fails the deal stays fresh and the next run tries again. Marking
+    # it eagerly (as this did until 2026-09-16) turns one dropped banner into
+    # permanent silence, because every later run then sees verdict == "GO" and
+    # reports `new 0`. That is also why --no-notify must not write a GO entry --
+    # the documented dev loop would otherwise suppress the real alert.
+    failed = []
     if not args.no_notify:
         for r in fresh:
-            notify.notify_go(r["rec"], r["verdict"], report_path)
+            no = r["rec"]["no"]
+            if notify.notify_go(r["rec"], r["verdict"], report_path):
+                seen[no] = {"verdict": "GO", "name": r["rec"]["name"], "notified": run_date}
+            else:
+                failed.append(r)
     save_seen(seen)
 
     print("%s — scored %d, GO %d (new %d), WATCH %d" % (run_date, len(results), len(gos), len(fresh), len(watches)))
+    for r in failed:
+        # stderr lands in radar.err.log, so a silent drop leaves a trace.
+        sys.stderr.write(
+            "notification FAILED for %s (no=%s) — stays unnotified, will retry next run\n"
+            % (r["rec"]["name"], r["rec"]["no"])
+        )
     print("report: %s" % report_path)
     for r in gos + watches:
         print("  %-6s %-20s %s" % (r["verdict"]["verdict"], r["rec"]["name"], r["rec"].get("subscription_start")))

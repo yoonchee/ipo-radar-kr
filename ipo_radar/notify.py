@@ -89,9 +89,15 @@ def _notify_terminal_notifier(title, subtitle, message, sound, open_target, grou
 
 def notify(title, subtitle, message, sound="Glass", open_target=None, group=None):
     # type: (str, str, str, Optional[str], Optional[str], Optional[str]) -> bool
-    """Post a banner. ``open_target`` and ``group`` need terminal-notifier."""
-    if _TN:
-        return _notify_terminal_notifier(title, subtitle, message, sound, open_target, group)
+    """Post a banner. ``open_target`` and ``group`` need terminal-notifier.
+
+    When terminal-notifier is installed but fails, fall back to osascript rather
+    than giving up. The fallback banner loses its click action, which is a much
+    smaller loss than losing the alert outright -- a GO is worth interrupting
+    for even when the banner cannot be clicked.
+    """
+    if _TN and _notify_terminal_notifier(title, subtitle, message, sound, open_target, group):
+        return True
     return _notify_osascript(title, subtitle, message, sound)
 
 
