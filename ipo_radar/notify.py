@@ -127,8 +127,8 @@ EMAIL_DEFAULTS = {
 def _keychain_password(service, account):
     """Read the SMTP password from the login keychain.
 
-    Keeping the app password here rather than in config.json or the launchd
-    plist means it never lands in the repo and never sits in plaintext on disk.
+    Keeping the app password here rather than in config.local.json or the
+    launchd plist means it never lands on disk in plaintext at all.
     ``security`` ships with macOS, so this adds no dependency. A LaunchAgent
     runs as the logged-in user, so the login keychain is already unlocked.
     """
@@ -159,7 +159,8 @@ def send_email(subject, body, cfg):
     to = cfg.get("email_to")
     sender = cfg.get("email_from") or to
     if not (to and sender):
-        LAST_ERROR = "email_to/email_from not set in config.json"
+        LAST_ERROR = ("email_to/email_from not set -- they live in the gitignored "
+                      "config.local.json, which a fresh checkout will not have")
         return False
     svc = cfg.get("keychain_service", "ipo-radar-smtp")
     pw = _keychain_password(svc, sender)

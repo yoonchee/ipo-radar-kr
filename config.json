@@ -10,8 +10,6 @@
   "alert_lead_days": 10,
   "notify_banner": true,
   "notify_email": true,
-  "email_to": "yoonchee@gmail.com",
-  "email_from": "yoonchee@gmail.com",
   "smtp_host": "smtp.gmail.com",
   "smtp_port": 465,
   "keychain_service": "ipo-radar-smtp"

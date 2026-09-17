@@ -31,13 +31,18 @@ STATE_DIR = os.path.join(ROOT, "state")
 REPORT_DIR = os.path.join(STATE_DIR, "reports")
 SEEN_PATH = os.path.join(STATE_DIR, "seen.json")
 CONFIG_PATH = os.path.join(ROOT, "config.json")
+# Machine-local overrides, gitignored. Anything personal to one machine or one
+# person -- the alert address, say -- belongs here rather than in the tracked
+# config, which is public. Applied last, so it wins over config.json.
+LOCAL_CONFIG_PATH = os.path.join(ROOT, "config.local.json")
 
 
 def load_config():
     cfg = dict(score.DEFAULT_CONFIG)
-    if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, "r") as fh:
-            cfg.update(json.load(fh))
+    for path in (CONFIG_PATH, LOCAL_CONFIG_PATH):
+        if os.path.exists(path):
+            with open(path, "r") as fh:
+                cfg.update(json.load(fh))
     return cfg
 
 

@@ -99,6 +99,33 @@ failed to reach the band top.
 
 Thresholds live in `config.json`.
 
+## Alerts
+
+A new GO raises a macOS banner and, when configured, an email. The two are
+independent: the banner fires whether or not the mail sent, since they fail in
+unrelated ways and a 청약 window can close the same day.
+
+Email is stdlib `smtplib` — no dependency. To turn it on:
+
+```bash
+# 1. a Gmail app password (needs 2FA), stored in the login keychain --
+#    run this in a real terminal, the prompt must be able to read input
+security add-generic-password -U -s ipo-radar-smtp -a you@gmail.com -w
+
+# 2. your address, in the gitignored local override
+cat > config.local.json <<'EOF'
+{ "email_to": "you@gmail.com", "email_from": "you@gmail.com" }
+EOF
+
+# 3. prove it works without waiting for a GO
+python3 run.py --test-email
+```
+
+`config.local.json` is merged over `config.json` and never committed — anything
+personal to one machine belongs there, since `config.json` is public. The SMTP
+password is only ever in the keychain, read at send time; it is never in either
+config file nor in the launchd plist.
+
 ## Calibration
 
 `backtest.py` joins 수요예측결과 (knowable before subscribing) against 신규상장
@@ -295,13 +322,14 @@ run.py               entry point — screen, report, notify
 backtest.py          threshold calibration against realised 시초/공모
 net_returns.py       실질손익 — won earned net of opportunity cost; writes dataset.json
 evaluate.py          walk-forward validation of the forecast model
-config.json          thresholds
+config.json          thresholds, alert channels
+config.local.json    machine-local overrides (alert address) — gitignored
 ipo_radar/
   fetch.py           HTTP + EUC-KR decode, polite 1s delay, retries
   parse.py           38.co.kr parsers (label-keyed, not position-keyed)
   score.py           GO/WATCH/PASS rules
   forecast.py        expected net won from kernel-weighted analogues
-  notify.py          macOS notifications via osascript
+  notify.py          alerts — macOS banner and/or email
   report.py          markdown rendering (daily screen)
   render_backtest.py HTML rendering (시초/공모 backtest)
   render_net.py      HTML rendering (실질손익 backtest)

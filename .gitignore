@@ -8,3 +8,7 @@ __pycache__/
 
 # macOS
 .DS_Store
+
+# Machine-local config overrides (alert address, etc). Never committed;
+# config.json holds only what is safe to publish.
+config.local.json

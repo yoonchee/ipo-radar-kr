@@ -85,6 +85,12 @@ matters because 15일 확약 unlocks before listing-day selling pressure is rele
 
 Thresholds live in `config.json` and were set from `backtest.py`, not from intuition.
 
+`config.local.json` is merged over `config.json` and is gitignored — the alert
+address lives there, because `config.json` is published. A fresh checkout has no
+such file, so email alerts stay off until one is created; `--test-email` says so
+rather than failing silently. The SMTP app password is in the login keychain
+(`security`, service `ipo-radar-smtp`), never on disk in plaintext.
+
 ## Working with the backtest
 
 `backtest.py` joins 수요예측결과 against 신규상장 and measures **시초/공모** — subscribe at the offer
