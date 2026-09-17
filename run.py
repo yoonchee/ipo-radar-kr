@@ -12,6 +12,7 @@ Usage:
     ./run.py --all           # ignore the lead-time window, score everything upcoming
     ./run.py --no-notify     # write the report, stay quiet
     ./run.py --force         # re-notify even if already alerted
+    ./run.py --test-email    # verify email delivery without waiting for a GO
 """
 
 import argparse
@@ -123,9 +124,27 @@ def main():
     ap.add_argument("--all", action="store_true", help="ignore the lead-time window")
     ap.add_argument("--no-notify", action="store_true", help="write report only")
     ap.add_argument("--force", action="store_true", help="re-notify already-alerted deals")
+    ap.add_argument("--test-email", action="store_true",
+                    help="send one test email and exit, to verify delivery")
     args = ap.parse_args()
 
     cfg = load_config()
+
+    if args.test_email:
+        # The failure mode of an email alert is silence, so make it provable
+        # without waiting for a real GO.
+        to = cfg.get("email_to") or "(unset)"
+        ok = notify.send_email(
+            "[공모주 레이더] 테스트 메일",
+            "이 메일이 도착했다면 GO 알림이 이메일로 전달됩니다.\n\n"
+            "설정: %s -> %s (%s:%s)\n" % (
+                cfg.get("email_from"), to, cfg.get("smtp_host"), cfg.get("smtp_port")),
+            cfg,
+        )
+        print("test email to %s: %s" % (to, "SENT" if ok else "FAILED"))
+        if not ok:
+            sys.stderr.write("reason: %s\n" % (notify.LAST_ERROR or "unknown"))
+        return 0 if ok else 1
     today = datetime.date.today()
     run_date = today.isoformat()
 
@@ -196,7 +215,8 @@ def main():
     if not args.no_notify:
         for r in fresh:
             no = r["rec"]["no"]
-            if notify.notify_go(r["rec"], r["verdict"], report_path):
+            if notify.notify_go(r["rec"], r["verdict"], report_path,
+                                cfg=cfg, fc=r.get("forecast")):
                 seen[no] = {"verdict": "GO", "name": r["rec"]["name"], "notified": run_date}
             else:
                 failed.append(r)
