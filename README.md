@@ -126,6 +126,31 @@ personal to one machine belongs there, since `config.json` is public. The SMTP
 password is only ever in the keychain, read at send time; it is never in either
 config file nor in the launchd plist.
 
+### Calendar events
+
+With `calendar_sync` on, a new GO also gets two Google Calendar events:
+
+| | when | alert |
+|---|---|---|
+| **청약** | last day of the subscription window, 10:00 | at 10:00 — some brokerages refuse a 청약 before then |
+| **매도** | 상장일, 09:00 | 08:30 — when 장전 동시호가 opens and the 시초가 is still settable |
+
+The 매도 timing is not cosmetic: the 시초가 is fixed at 09:00 from the orders
+already in the auction, and 시초/공모 is the strategy `backtest.py` measures.
+
+```bash
+python3 run.py --gcal-setup     # one-time OAuth, stores the refresh token
+```
+
+Needs an OAuth client (Desktop app) from Google Cloud Console with the Calendar
+API enabled. Then set `"calendar_sync": true`. Google is reached over stdlib
+`urllib`; the refresh token lives in the keychain, never in a config file.
+
+`state/calendar.json` records which of the two events each deal already has, so
+nothing is created twice. A GO whose 상장일 has not published yet — common, it
+arrives with the 확정공모가 — gets its 청약 event now and its 매도 event on a
+later run.
+
 ## Calibration
 
 `backtest.py` joins 수요예측결과 (knowable before subscribing) against 신규상장
@@ -330,6 +355,7 @@ ipo_radar/
   score.py           GO/WATCH/PASS rules
   forecast.py        expected net won from kernel-weighted analogues
   notify.py          alerts — macOS banner and/or email
+  calendar_sync.py   Google Calendar 청약/매도 events for GO deals
   report.py          markdown rendering (daily screen)
   render_backtest.py HTML rendering (시초/공모 backtest)
   render_net.py      HTML rendering (실질손익 backtest)

@@ -24,12 +24,17 @@ import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from ipo_radar import fetch, forecast, notify, parse, report, score
+from ipo_radar import calendar_sync, fetch, forecast, notify, parse, report, score
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 STATE_DIR = os.path.join(ROOT, "state")
 REPORT_DIR = os.path.join(STATE_DIR, "reports")
 SEEN_PATH = os.path.join(STATE_DIR, "seen.json")
+# Which calendar events already exist, per deal. Kept apart from seen.json:
+# that file records that an ALERT was delivered, this one records that an
+# EVENT was created, and the two advance independently -- a deal is alerted
+# once but may gain its 매도 event days later when 상장일 publishes.
+CALENDAR_PATH = os.path.join(STATE_DIR, "calendar.json")
 CONFIG_PATH = os.path.join(ROOT, "config.json")
 # Machine-local overrides, gitignored. Anything personal to one machine or one
 # person -- the alert address, say -- belongs here rather than in the tracked
@@ -39,6 +44,7 @@ LOCAL_CONFIG_PATH = os.path.join(ROOT, "config.local.json")
 
 def load_config():
     cfg = dict(score.DEFAULT_CONFIG)
+    cfg.update(calendar_sync.CALENDAR_DEFAULTS)
     for path in (CONFIG_PATH, LOCAL_CONFIG_PATH):
         if os.path.exists(path):
             with open(path, "r") as fh:
@@ -60,6 +66,22 @@ def save_seen(seen):
     os.makedirs(STATE_DIR, exist_ok=True)
     with open(SEEN_PATH, "w") as fh:
         json.dump(seen, fh, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def load_calendar_state():
+    if os.path.exists(CALENDAR_PATH):
+        try:
+            with open(CALENDAR_PATH, "r") as fh:
+                return json.load(fh)
+        except ValueError:
+            return {}
+    return {}
+
+
+def save_calendar_state(state):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    with open(CALENDAR_PATH, "w") as fh:
+        json.dump(state, fh, ensure_ascii=False, indent=2, sort_keys=True)
 
 
 def select_candidates(schedule, cfg, today, take_all=False):
@@ -131,9 +153,28 @@ def main():
     ap.add_argument("--force", action="store_true", help="re-notify already-alerted deals")
     ap.add_argument("--test-email", action="store_true",
                     help="send one test email and exit, to verify delivery")
+    ap.add_argument("--gcal-setup", action="store_true",
+                    help="one-time Google Calendar authorisation, then exit")
     args = ap.parse_args()
 
     cfg = load_config()
+
+    if args.gcal_setup:
+        print("Google Cloud Console -> APIs & Services -> Credentials ->")
+        print("  Create credentials -> OAuth client ID -> Desktop app")
+        print("  (enable the Google Calendar API for the project first)\n")
+        cid = input("client_id: ").strip()
+        secret = input("client_secret: ").strip()
+        if not (cid and secret):
+            sys.stderr.write("both values are required\n")
+            return 1
+        ok, detail = calendar_sync.authorize(cid, secret, cfg)
+        if not ok:
+            sys.stderr.write("setup failed: %s\n" % detail)
+            return 1
+        print("\nstored in keychain service '%s'." % detail)
+        print('now set "calendar_sync": true in config.json')
+        return 0
 
     if args.test_email:
         # The failure mode of an email alert is silence, so make it provable
@@ -227,7 +268,27 @@ def main():
                 failed.append(r)
     save_seen(seen)
 
+    # Calendar events for every GO, not just the newly-alerted ones: a deal is
+    # alerted once, but its 매도 event cannot be created until 상장일 publishes,
+    # which often lands days after the GO. Iterating all GOs lets a later run
+    # fill that in. sync_deal() is idempotent -- it creates only empty slots.
+    cal_made = []
+    if not args.no_notify and cfg.get("calendar_sync"):
+        cal_state = load_calendar_state()
+        for r in gos:
+            no = r["rec"]["no"]
+            entry = cal_state.setdefault(no, {"cheongyak": None, "maedo": None})
+            made = calendar_sync.sync_deal(r["rec"], r["verdict"], r.get("forecast"),
+                                           cfg, entry)
+            for slot in made:
+                cal_made.append((r["rec"]["name"], slot))
+            if calendar_sync.LAST_ERROR:
+                sys.stderr.write("calendar: %s\n" % calendar_sync.LAST_ERROR)
+        save_calendar_state(cal_state)
+
     print("%s — scored %d, GO %d (new %d), WATCH %d" % (run_date, len(results), len(gos), len(fresh), len(watches)))
+    for name, slot in cal_made:
+        print("  calendar: %s %s event created" % (name, slot))
     for r in failed:
         # stderr lands in radar.err.log, so a silent drop leaves a trace.
         sys.stderr.write(

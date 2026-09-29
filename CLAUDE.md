@@ -85,6 +85,15 @@ matters because 15일 확약 unlocks before listing-day selling pressure is rele
 
 Thresholds live in `config.json` and were set from `backtest.py`, not from intuition.
 
+`calendar_sync.py` creates two Google Calendar events per GO — 청약 on the last
+subscription day at 10:00 alerting at 10:00 (brokerages may refuse an earlier
+청약), and 매도 on 상장일 at 09:00 alerting at 08:30, when 장전 동시호가 opens and
+the 시초가 can still be set. Do not "tidy" the 매도 alert to fire at 09:00: the
+시초가 is already fixed by then, and 시초/공모 is the strategy being screened for.
+`state/calendar.json` tracks which events exist per deal so none is created
+twice, and lets a 매도 event be added on a later run once 상장일 publishes. This
+stays decision support — it writes reminders, never orders.
+
 `config.local.json` is merged over `config.json` and is gitignored — the alert
 address lives there, because `config.json` is published. A fresh checkout has no
 such file, so email alerts stay off until one is created; `--test-email` says so

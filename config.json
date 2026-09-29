@@ -12,5 +12,14 @@
   "notify_email": true,
   "smtp_host": "smtp.gmail.com",
   "smtp_port": 465,
-  "keychain_service": "ipo-radar-smtp"
+  "keychain_service": "ipo-radar-smtp",
+  "calendar_sync": false,
+  "calendar_id": "primary",
+  "gcal_keychain_service": "ipo-radar-gcal",
+  "calendar_timezone": "Asia/Seoul",
+  "cheongyak_hour": 10,
+  "cheongyak_reminder_min": 0,
+  "maedo_hour": 9,
+  "maedo_reminder_min": 30,
+  "event_duration_min": 30
 }
