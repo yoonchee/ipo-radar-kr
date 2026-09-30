@@ -316,10 +316,14 @@ def sync_deal(rec, verdict, fc, cfg, state):
     """
     global LAST_ERROR
     LAST_ERROR = None
+    # A reminder for a date that has passed is clutter, not information. This
+    # comes up whenever a slot is empty for a deal whose window has closed --
+    # after a state loss, or when a deal is re-examined late.
+    today = datetime.date.today().isoformat()
     wanted = []
-    if not state.get("cheongyak") and rec.get("subscription_end"):
+    if not state.get("cheongyak") and (rec.get("subscription_end") or "") >= today:
         wanted.append(("cheongyak", cheongyak_event(rec, verdict, fc, cfg)))
-    if not state.get("maedo") and rec.get("listing_date"):
+    if not state.get("maedo") and (rec.get("listing_date") or "") >= today:
         wanted.append(("maedo", maedo_event(rec, verdict, fc, cfg)))
     if not wanted:
         return []
