@@ -13,6 +13,7 @@ Usage:
     ./run.py --no-notify     # write the report, stay quiet
     ./run.py --force         # re-notify even if already alerted
     ./run.py --test-email    # verify email delivery without waiting for a GO
+    ./run.py --test-calendar # verify calendar access without waiting for a GO
 """
 
 import argparse
@@ -153,28 +154,17 @@ def main():
     ap.add_argument("--force", action="store_true", help="re-notify already-alerted deals")
     ap.add_argument("--test-email", action="store_true",
                     help="send one test email and exit, to verify delivery")
-    ap.add_argument("--gcal-setup", action="store_true",
-                    help="one-time Google Calendar authorisation, then exit")
+    ap.add_argument("--test-calendar", action="store_true",
+                    help="verify Google Calendar access, then exit")
     args = ap.parse_args()
 
     cfg = load_config()
 
-    if args.gcal_setup:
-        print("Google Cloud Console -> APIs & Services -> Credentials ->")
-        print("  Create credentials -> OAuth client ID -> Desktop app")
-        print("  (enable the Google Calendar API for the project first)\n")
-        cid = input("client_id: ").strip()
-        secret = input("client_secret: ").strip()
-        if not (cid and secret):
-            sys.stderr.write("both values are required\n")
-            return 1
-        ok, detail = calendar_sync.authorize(cid, secret, cfg)
-        if not ok:
-            sys.stderr.write("setup failed: %s\n" % detail)
-            return 1
-        print("\nstored in keychain service '%s'." % detail)
-        print('now set "calendar_sync": true in config.json')
-        return 0
+    if args.test_calendar:
+        ok, detail = calendar_sync.self_test(cfg)
+        print("calendar access: %s" % ("OK" if ok else "FAILED"))
+        print("  %s" % detail)
+        return 0 if ok else 1
 
     if args.test_email:
         # The failure mode of an email alert is silence, so make it provable

@@ -139,15 +139,23 @@ The 매도 timing is not cosmetic: the 시초가 is fixed at 09:00 from the orde
 already in the auction, and 시초/공모 is the strategy `backtest.py` measures.
 
 ```bash
-python3 run.py --gcal-setup     # one-time OAuth, stores the refresh token
+python3 run.py --test-calendar   # prove access without waiting for a GO
 ```
 
-Needs an OAuth client (Desktop app) from Google Cloud Console with the Calendar
-API enabled. Then set `"calendar_sync": true`. Google is reached over stdlib
-`urllib`; the refresh token lives in the keychain, never in a config file.
+No setup beyond the Gmail app password email already uses. Google's CalDAV
+endpoint accepts it, so there is no OAuth client, no Google Cloud project and no
+consent screen — one `PUT` per event over stdlib `urllib`. Once `--test-calendar`
+prints `OK`, set `"calendar_sync": true`.
 
+Authenticating as the account owner matters: calendar reminders belong to
+whoever sets them, so writing as you is what makes the 10:00 and 08:30 alarms
+actually fire for you.
+
+Event UIDs are deterministic (`ipo-radar-<no>-<slot>`), so a repeat write
+replaces an event instead of adding a second one — duplication is impossible even
+if `state/calendar.json` is lost, which a fresh checkout does.
 `state/calendar.json` records which of the two events each deal already has, so
-nothing is created twice. A GO whose 상장일 has not published yet — common, it
+no redundant writes happen at all. A GO whose 상장일 has not published yet — common, it
 arrives with the 확정공모가 — gets its 청약 event now and its 매도 event on a
 later run.
 

@@ -94,6 +94,14 @@ the 시초가 can still be set. Do not "tidy" the 매도 alert to fire at 09:00:
 twice, and lets a 매도 event be added on a later run once 상장일 publishes. This
 stays decision support — it writes reminders, never orders.
 
+It reaches Google over **CalDAV** (`www.google.com/calendar/dav`, not
+`apps.google.com`, which 405s on PROPFIND) using the **same Gmail app password as
+SMTP**. That is deliberate and was chosen after the REST API: the REST route
+needs an OAuth client, hence a Cloud project, consent screen and publishing an
+app with a sensitive scope — verification paperwork for a one-user script. Do not
+"upgrade" this to the REST API. Event UIDs are deterministic, so a repeat write
+replaces rather than duplicates even when calendar.json is missing.
+
 `config.local.json` is merged over `config.json` and is gitignored — the alert
 address lives there, because `config.json` is published. A fresh checkout has no
 such file, so email alerts stay off until one is created; `--test-email` says so

@@ -1,4 +1,4 @@
-"""Google Calendar events for GO-rated deals.
+"""Google Calendar events for GO-rated deals, over CalDAV.
 
 Two events per deal, mirroring the two decisions the screen actually informs:
 
@@ -10,34 +10,42 @@ Two events per deal, mirroring the two decisions the screen actually informs:
   in it. The strategy `backtest.py` measures is 시초/공모 — sell into that
   auction — so an alert arriving at 09:00 would already be late.
 
-Talks to Google over urllib. No dependency, per the stdlib-only rule; the
-OAuth refresh grant is one form POST and event creation is one JSON POST.
+Why CalDAV and not the Calendar REST API: the REST API needs an OAuth client,
+which means a Google Cloud project, a consent screen, and publishing an app with
+a sensitive scope — verification paperwork for a one-user script. Google's CalDAV
+endpoint accepts the **same Gmail app password already used for SMTP**, so this
+adds no credential, no project, and no consent screen. One PUT per event over
+urllib, so the stdlib-only rule holds.
+
+Authenticating as the account owner also fixes a subtler problem: calendar
+reminders belong to whoever set them. Events written as the user carry VALARMs
+that fire for the user — the entire point, and not true of a service account
+writing into a shared calendar.
+
+Event UIDs are deterministic (`ipo-radar-<no>-<slot>`), so a PUT for a deal that
+already has an event *replaces* it rather than adding a second one. Duplication
+is therefore impossible even if state/calendar.json is lost — which is exactly
+what a fresh checkout does.
 
 This stays inside the decision-support boundary: it writes reminders to a
 calendar. It never touches a brokerage, and must not grow to.
-
-Credentials (client id/secret and the refresh token) live in the login keychain
-as one JSON blob, never in either config file. Run `./run.py --gcal-setup` once
-to put them there.
 """
 
-import json
+import base64
+import datetime
 import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Dict, List, Optional
 
-TOKEN_URL = "https://oauth2.googleapis.com/token"
-AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
-API_BASE = "https://www.googleapis.com/calendar/v3"
-# Only the events scope -- this never needs to read or delete a calendar.
-SCOPE = "https://www.googleapis.com/auth/calendar.events"
+# apps.google.com answers 405 to PROPFIND; www.google.com is the host that
+# speaks CalDAV. Verified empirically -- do not "modernise" this hostname.
+DAV_BASE = "https://www.google.com/calendar/dav"
 
 CALENDAR_DEFAULTS = {
-    "calendar_sync": False,          # off until --gcal-setup has run
-    "calendar_id": "primary",
-    "gcal_keychain_service": "ipo-radar-gcal",
+    "calendar_sync": False,          # off until --test-calendar passes
+    "calendar_id": "primary",        # "primary" -> the account's own calendar
     "calendar_timezone": "Asia/Seoul",
     "cheongyak_hour": 10,            # 청약 event start
     "cheongyak_reminder_min": 0,     # alert at the event, not before
@@ -53,71 +61,129 @@ LAST_ERROR = None
 
 # --- credentials -----------------------------------------------------------
 
-def _keychain_read(service):
+def _keychain_password(service, account):
+    """The Gmail app password -- the same keychain item SMTP reads."""
+    cmd = ["security", "find-generic-password", "-s", service]
+    if account:
+        cmd += ["-a", account]
+    cmd += ["-w"]
     try:
-        out = subprocess.run(["security", "find-generic-password", "-s", service, "-w"],
-                             capture_output=True, timeout=15)
+        out = subprocess.run(cmd, capture_output=True, timeout=15)
         if out.returncode != 0:
             return None
-        raw = out.stdout.decode("utf-8").strip()
-        return json.loads(raw) if raw else None
-    except (subprocess.SubprocessError, OSError, ValueError):
+        return out.stdout.decode("utf-8").strip() or None
+    except (subprocess.SubprocessError, OSError):
         return None
 
 
-def _keychain_write(service, account, blob):
-    try:
-        out = subprocess.run(
-            ["security", "add-generic-password", "-U", "-s", service,
-             "-a", account, "-w", json.dumps(blob)],
-            capture_output=True, timeout=15)
-        return out.returncode == 0
-    except (subprocess.SubprocessError, OSError):
-        return False
+def _auth(cfg):
+    """Returns (user, basic_auth_header), or (None, None) with LAST_ERROR set."""
+    global LAST_ERROR
+    user = cfg.get("email_from") or cfg.get("email_to")
+    if not user:
+        LAST_ERROR = ("email_from not set -- CalDAV signs in as the Google account, "
+                      "so it needs the address from config.local.json")
+        return None, None
+    pw = _keychain_password(cfg.get("keychain_service", "ipo-radar-smtp"), user)
+    if not pw:
+        LAST_ERROR = ("no app password in keychain for '%s' -- the same item SMTP "
+                      "uses (service '%s')" % (user, cfg.get("keychain_service")))
+        return None, None
+    token = base64.b64encode(("%s:%s" % (user, pw)).encode("utf-8")).decode("ascii")
+    return user, "Basic " + token
+
+
+def _collection(cfg, user):
+    cal = cfg.get("calendar_id") or "primary"
+    if cal == "primary":
+        cal = user
+    return "%s/%s/events/" % (DAV_BASE, urllib.parse.quote(cal, safe="@."))
+
+
+# --- iCalendar -------------------------------------------------------------
+
+def _esc(text):
+    """Escape a value for an iCalendar text property (RFC 5545 3.3.11)."""
+    return (text.replace("\\", "\\\\").replace(";", "\;")
+                .replace(",", "\\,").replace("\r\n", "\\n").replace("\n", "\\n"))
+
+
+def _fold(line):
+    """Fold to 75 octets per RFC 5545, without splitting a UTF-8 character."""
+    raw = line.encode("utf-8")
+    if len(raw) <= 75:
+        return line
+    out, start, limit = [], 0, 75
+    while start < len(raw):
+        end = min(start + limit, len(raw))
+        # Back off to a character boundary (continuation bytes are 10xxxxxx).
+        while end > start and end < len(raw) and (raw[end] & 0xC0) == 0x80:
+            end -= 1
+        out.append(raw[start:end].decode("utf-8"))
+        start = end
+        limit = 74  # continuation lines carry a leading space
+    return "\r\n ".join(out)
+
+
+def _vevent(uid, ev, cfg):
+    tz = cfg.get("calendar_timezone", "Asia/Seoul")
+    dur = int(cfg.get("event_duration_min", 30))
+    day = ev["_date"].replace("-", "")
+    start_min = int(ev["_hour"]) * 60
+    end_min = start_min + dur
+    stamp = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    lines = [
+        "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//ipo-radar-kr//KR//EN",
+        "CALSCALE:GREGORIAN",
+        # Korea has no DST, so a fixed-offset VTIMEZONE is complete.
+        "BEGIN:VTIMEZONE", "TZID:" + tz, "BEGIN:STANDARD",
+        "DTSTART:19700101T000000", "TZOFFSETFROM:+0900", "TZOFFSETTO:+0900",
+        "TZNAME:KST", "END:STANDARD", "END:VTIMEZONE",
+        "BEGIN:VEVENT",
+        "UID:" + uid,
+        "DTSTAMP:" + stamp,
+        "DTSTART;TZID=%s:%sT%02d%02d00" % (tz, day, start_min // 60, start_min % 60),
+        "DTEND;TZID=%s:%sT%02d%02d00" % (tz, day, end_min // 60, end_min % 60),
+        "SUMMARY:" + _esc(ev["summary"]),
+        "LOCATION:" + _esc(ev["location"]),
+        "DESCRIPTION:" + _esc(ev["description"]),
+        "BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:" + _esc(ev["summary"]),
+        "TRIGGER:-PT%dM" % int(ev["_reminder"]), "END:VALARM",
+        "END:VEVENT", "END:VCALENDAR",
+    ]
+    return "\r\n".join(_fold(l) for l in lines) + "\r\n"
 
 
 # --- HTTP ------------------------------------------------------------------
 
-def _post(url, data, headers, timeout=20):
-    """POST and decode JSON. Returns (body_dict, error_string)."""
-    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+def _request(method, url, auth, data=None, ctype=None, timeout=25):
+    headers = {"Authorization": auth}
+    if ctype:
+        headers["Content-Type"] = ctype
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.loads(r.read().decode("utf-8")), None
+            return r.status, None
     except urllib.error.HTTPError as e:
-        try:
-            detail = json.loads(e.read().decode("utf-8"))
-            msg = detail.get("error_description") or \
-                (detail.get("error") or {}).get("message") or str(detail)
-        except Exception:
-            msg = e.reason
-        return None, "HTTP %s: %s" % (e.code, msg)
-    except (urllib.error.URLError, OSError, ValueError) as e:
+        hint = ""
+        if e.code in (401, 403):
+            hint = (" -- app password rejected for CalDAV; confirm 2FA is on and "
+                    "that the password has not been revoked")
+        return e.code, "HTTP %s %s%s" % (e.code, e.reason, hint)
+    except (urllib.error.URLError, OSError) as e:
         return None, "%s: %s" % (type(e).__name__, e)
 
 
-def _access_token(cfg):
-    """Exchange the stored refresh token for a short-lived access token."""
+def _put(uid, ev, cfg, user, auth):
+    """Create or replace one event. Returns True on success."""
     global LAST_ERROR
-    svc = cfg.get("gcal_keychain_service", "ipo-radar-gcal")
-    creds = _keychain_read(svc)
-    if not creds or not creds.get("refresh_token"):
-        LAST_ERROR = ("no Google credentials in keychain service '%s' -- "
-                      "run ./run.py --gcal-setup once" % svc)
-        return None
-    body = urllib.parse.urlencode({
-        "client_id": creds["client_id"],
-        "client_secret": creds["client_secret"],
-        "refresh_token": creds["refresh_token"],
-        "grant_type": "refresh_token",
-    }).encode("utf-8")
-    out, err = _post(TOKEN_URL, body,
-                     {"Content-Type": "application/x-www-form-urlencoded"})
-    if err:
-        LAST_ERROR = ("refresh token rejected (%s) -- revoked or expired, "
-                      "re-run ./run.py --gcal-setup" % err)
-        return None
-    return out.get("access_token")
+    url = _collection(cfg, user) + urllib.parse.quote(uid) + ".ics"
+    status, err = _request("PUT", url, auth, _vevent(uid, ev, cfg).encode("utf-8"),
+                           'text/calendar; charset="utf-8"')
+    if status in (200, 201, 204):
+        return True
+    LAST_ERROR = "%s: %s" % (ev["summary"], err or "unexpected status %s" % status)
+    return False
 
 
 # --- event construction ----------------------------------------------------
@@ -147,7 +213,8 @@ def _forecast_lines(fc, indent="  "):
         return []
     L = ["", "기대손익 (실질, 최대 청약한도 기준)"]
     # 만원, matching the report -- 15,375만 reads faster than 153,750,000.
-    L.append("%s투입증거금    %s만원" % (indent, "{:,.0f}".format((fc.get("capital") or 0) / 10000.0)))
+    L.append("%s투입증거금    %s만원" % (
+        indent, "{:,.0f}".format((fc.get("capital") or 0) / 10000.0)))
     L.append("%s기대손익      %s" % (indent, _won(fc["ev"])))
     if fc.get("ev_lo") is not None:
         L.append("%s90%% 신뢰구간  %s ~ %s" % (indent, _won(fc["ev_lo"]), _won(fc["ev_hi"])))
@@ -206,7 +273,7 @@ def maedo_event(rec, verdict, fc, cfg):
          ""]
     L.append("확정공모가    %s원" % ("{:,}".format(price) if price else "?"))
     if price:
-        # 상장일 시초가는 공모가의 60~400% 범위에서 결정됩니다 (2023-06 제도 변경).
+        # 시초가는 공모가의 60~400% 범위에서 결정됩니다 (2023-06 제도 변경).
         L.append("시초가 범위   %s원 ~ %s원 (공모가의 60~400%%)" % (
             "{:,}".format(int(price * 0.6)), "{:,}".format(int(price * 4))))
     if fc and fc.get("shares_med") is not None:
@@ -229,41 +296,19 @@ def maedo_event(rec, verdict, fc, cfg):
     }
 
 
-def _insert(ev, cfg, token):
-    """POST one event. Returns its id, or None with LAST_ERROR set."""
-    global LAST_ERROR
-    tz = cfg.get("calendar_timezone", "Asia/Seoul")
-    dur = int(cfg.get("event_duration_min", 30))
-    start_h, mins = ev["_hour"], ev["_hour"] * 60 + dur
-    body = {
-        "summary": ev["summary"],
-        "location": ev["location"],
-        "description": ev["description"],
-        "start": {"dateTime": "%sT%02d:00:00" % (ev["_date"], start_h), "timeZone": tz},
-        "end": {"dateTime": "%sT%02d:%02d:00" % (ev["_date"], mins // 60, mins % 60),
-                "timeZone": tz},
-        "reminders": {"useDefault": False,
-                      "overrides": [{"method": "popup", "minutes": ev["_reminder"]}]},
-    }
-    url = "%s/calendars/%s/events" % (
-        API_BASE, urllib.parse.quote(cfg.get("calendar_id", "primary"), safe=""))
-    out, err = _post(url, json.dumps(body).encode("utf-8"),
-                     {"Authorization": "Bearer " + token,
-                      "Content-Type": "application/json; charset=UTF-8"})
-    if err:
-        LAST_ERROR = "%s: %s" % (ev["summary"], err)
-        return None
-    return out.get("id")
+def event_uid(no, slot):
+    """Deterministic, so a repeat PUT replaces rather than duplicates."""
+    return "ipo-radar-%s-%s" % (no, slot)
 
 
 def sync_deal(rec, verdict, fc, cfg, state):
     """Create whichever of the two events this deal is still missing.
 
     `state` is the per-deal record from state/calendar.json, mutated in place:
-    {"cheongyak": <event id or None>, "maedo": <event id or None>}. An event is
-    created only when its slot is empty AND its date is known, so:
+    {"cheongyak": <uid or None>, "maedo": <uid or None>}. An event is written
+    only when its slot is empty AND its date is known, so:
 
-    - a run that already created 청약 never creates it twice, and
+    - a run that already created 청약 never rewrites it, and
     - a GO whose 상장일 has not published yet (common -- it appears with the
       확정공모가, sometimes days later) gets 청약 now and 매도 on a later run.
 
@@ -279,81 +324,40 @@ def sync_deal(rec, verdict, fc, cfg, state):
     if not wanted:
         return []
 
-    token = _access_token(cfg)
-    if not token:
+    user, auth = _auth(cfg)
+    if not auth:
         return []
 
     created = []
     for slot, ev in wanted:
-        eid = _insert(ev, cfg, token)
-        if eid:
-            state[slot] = eid
+        uid = event_uid(rec.get("no") or ev["summary"], slot)
+        if _put(uid, ev, cfg, user, auth):
+            state[slot] = uid
             created.append(slot)
     return created
 
 
-# --- one-time authorisation ------------------------------------------------
+def self_test(cfg):
+    """Write a throwaway event and remove it. Returns (ok, detail).
 
-def authorize(client_id, client_secret, cfg, port=8765):
-    """Loopback OAuth flow; stores the refresh token in the keychain.
-
-    Google retired the out-of-band redirect, so this runs a one-request local
-    server to catch the code. Everything here is stdlib (http.server, webbrowser).
+    Proves the whole path -- keychain, CalDAV auth, write access -- without
+    waiting for a GO and without leaving anything on the calendar.
     """
-    import http.server
-    import webbrowser
-
-    redirect = "http://localhost:%d/" % port
-    params = urllib.parse.urlencode({
-        "client_id": client_id, "redirect_uri": redirect, "response_type": "code",
-        "scope": SCOPE, "access_type": "offline", "prompt": "consent",
-    })
-    url = AUTH_URL + "?" + params
-    holder = {}
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-            holder["code"] = (q.get("code") or [None])[0]
-            holder["error"] = (q.get("error") or [None])[0]
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.end_headers()
-            msg = "인증 완료 — 터미널로 돌아가세요." if holder.get("code") else "인증 실패"
-            self.wfile.write(("<html><body><h2>%s</h2></body></html>" % msg).encode("utf-8"))
-
-        def log_message(self, *a):
-            pass
-
-    print("브라우저에서 Google 계정 인증을 진행하세요:\n  %s\n" % url)
-    try:
-        webbrowser.open(url)
-    except Exception:
-        pass
-    srv = http.server.HTTPServer(("localhost", port), Handler)
-    srv.timeout = 300
-    srv.handle_request()
-    srv.server_close()
-
-    if not holder.get("code"):
-        return False, "authorisation was not completed (%s)" % (holder.get("error") or "no code")
-
-    body = urllib.parse.urlencode({
-        "client_id": client_id, "client_secret": client_secret,
-        "code": holder["code"], "grant_type": "authorization_code",
-        "redirect_uri": redirect,
-    }).encode("utf-8")
-    out, err = _post(TOKEN_URL, body,
-                     {"Content-Type": "application/x-www-form-urlencoded"})
-    if err:
-        return False, "code exchange failed -- %s" % err
-    if not out.get("refresh_token"):
-        return False, ("Google returned no refresh token. Revoke the app at "
-                       "myaccount.google.com/permissions and run this again.")
-
-    svc = cfg.get("gcal_keychain_service", "ipo-radar-gcal")
-    blob = {"client_id": client_id, "client_secret": client_secret,
-            "refresh_token": out["refresh_token"]}
-    if not _keychain_write(svc, cfg.get("email_from") or "ipo-radar", blob):
-        return False, "could not write to keychain service '%s'" % svc
-    return True, svc
+    global LAST_ERROR
+    LAST_ERROR = None
+    user, auth = _auth(cfg)
+    if not auth:
+        return False, LAST_ERROR
+    day = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
+    uid = "ipo-radar-selftest"
+    ev = {"summary": "공모주 레이더 — 연결 테스트", "location": "테스트",
+          "description": "이 이벤트는 자동으로 삭제됩니다.",
+          "_date": day, "_hour": 12, "_reminder": 0}
+    if not _put(uid, ev, cfg, user, auth):
+        return False, LAST_ERROR
+    url = _collection(cfg, user) + urllib.parse.quote(uid) + ".ics"
+    status, err = _request("DELETE", url, auth)
+    if status not in (200, 204, 404):
+        return True, ("wrote a test event but could not remove it (%s) -- delete it "
+                      "by hand (%s 12:00)" % (err or status, day))
+    return True, "wrote and removed a test event on %s (as %s)" % (day, user)
