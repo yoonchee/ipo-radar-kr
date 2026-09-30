@@ -94,6 +94,15 @@ the 시초가 can still be set. Do not "tidy" the 매도 alert to fire at 09:00:
 twice, and lets a 매도 event be added on a later run once 상장일 publishes. This
 stays decision support — it writes reminders, never orders.
 
+The 매도 event carries a second, EMAIL alarm at the same offset. That is not a
+belt-and-braces flourish — it is what pins the popup. Google normalises every
+alarm to a relative popup and discards it when the set equals the calendar's
+default, storing `useDefaultReminders: true` instead; measured, a lone -PT30M
+against a 30-minute default collapsed, and so did an absolute
+`TRIGGER;VALUE=DATE-TIME`. Only a set that differs survives. Remove the EMAIL
+alarm and the 08:30 alert silently starts tracking whatever the user's default
+reminder happens to be.
+
 It reaches Google over **CalDAV** (`www.google.com/calendar/dav`, not
 `apps.google.com`, which 405s on PROPFIND) using the **same Gmail app password as
 SMTP**. That is deliberate and was chosen after the REST API: the REST route

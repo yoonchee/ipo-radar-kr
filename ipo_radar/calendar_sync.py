@@ -125,7 +125,37 @@ def _fold(line):
     return "\r\n ".join(out)
 
 
-def _vevent(uid, ev, cfg):
+def _valarms(ev, user):
+    """VALARMs for one event, pinned against the calendar's default reminder.
+
+    Google normalises every alarm to a relative popup and then DISCARDS it if
+    the resulting set equals the calendar's default -- storing the event as
+    "use default" instead. Measured: a lone -PT30M popup against a 30-minute
+    default came back as useDefaultReminders=true, and an absolute
+    TRIGGER;VALUE=DATE-TIME collapsed the same way. Only -PT29M survived, i.e.
+    the test is on the VALUE, not the form.
+
+    So an event whose alarm happens to match the default silently starts
+    tracking that default: change the default, and the 매도 alert moves off
+    08:30 with it. Emitting a second alarm on a different ACTION makes the set
+    {popup, email} -- never equal to a single-popup default -- which pins the
+    popup at the exact offset for any default the user might set. The extra
+    item is one calendar email at the same moment, which on a morning money
+    moves is not unwelcome.
+    """
+    mins = int(ev["_reminder"])
+    L = ["BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:" + _esc(ev["summary"]),
+         "TRIGGER:-PT%dM" % mins, "END:VALARM"]
+    if ev.get("_pin") and user:
+        L += ["BEGIN:VALARM", "ACTION:EMAIL",
+              "DESCRIPTION:" + _esc(ev["description"][:200]),
+              "SUMMARY:" + _esc(ev["summary"]),
+              "ATTENDEE:mailto:" + user,
+              "TRIGGER:-PT%dM" % mins, "END:VALARM"]
+    return L
+
+
+def _vevent(uid, ev, cfg, user=None):
     tz = cfg.get("calendar_timezone", "Asia/Seoul")
     dur = int(cfg.get("event_duration_min", 30))
     day = ev["_date"].replace("-", "")
@@ -147,8 +177,7 @@ def _vevent(uid, ev, cfg):
         "SUMMARY:" + _esc(ev["summary"]),
         "LOCATION:" + _esc(ev["location"]),
         "DESCRIPTION:" + _esc(ev["description"]),
-        "BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:" + _esc(ev["summary"]),
-        "TRIGGER:-PT%dM" % int(ev["_reminder"]), "END:VALARM",
+    ] + _valarms(ev, user) + [
         "END:VEVENT", "END:VCALENDAR",
     ]
     return "\r\n".join(_fold(l) for l in lines) + "\r\n"
@@ -178,7 +207,7 @@ def _put(uid, ev, cfg, user, auth):
     """Create or replace one event. Returns True on success."""
     global LAST_ERROR
     url = _collection(cfg, user) + urllib.parse.quote(uid) + ".ics"
-    status, err = _request("PUT", url, auth, _vevent(uid, ev, cfg).encode("utf-8"),
+    status, err = _request("PUT", url, auth, _vevent(uid, ev, cfg, user).encode("utf-8"),
                            'text/calendar; charset="utf-8"')
     if status in (200, 201, 204):
         return True
@@ -293,6 +322,9 @@ def maedo_event(rec, verdict, fc, cfg):
         "_date": rec.get("listing_date"),
         "_hour": int(cfg.get("maedo_hour", 9)),
         "_reminder": int(cfg.get("maedo_reminder_min", 30)),
+        # Pin it: 30 minutes is a common calendar default, and this alert
+        # landing exactly when 장전 동시호가 opens is the whole point.
+        "_pin": True,
     }
 
 
