@@ -124,12 +124,16 @@ def my_limit(rec, cfg):
     Returns {"broker", "shares", "multiplier"}; multiplier is None when the
     figure is 38's standard limit rather than a personal one.
     """
-    mult = cfg.get("my_limit_multiplier") or {}
+    # Compare without a trailing 증권: 38 occasionally truncates a name (one
+    # 신한 deal reads "신한투자" against 21 reading "신한투자증권"), and an exact
+    # match would miss it silently, falling back to the standard limit.
+    norm = lambda n: (n or "").strip()[:-2] if (n or "").strip().endswith("증권") else (n or "").strip()
+    mult = {norm(k): v for k, v in (cfg.get("my_limit_multiplier") or {}).items()}
     best = None
     for u in rec.get("underwriters", []):
         name = u.get("name")
-        if name in mult and u.get("limit_low"):
-            m = float(mult[name])
+        if norm(name) in mult and u.get("limit_low"):
+            m = float(mult[norm(name)])
             cand = {"broker": name, "shares": int(u["limit_low"] * m), "multiplier": m}
         elif u.get("limit_high"):
             cand = {"broker": name, "shares": int(u["limit_high"]), "multiplier": None}
