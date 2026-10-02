@@ -108,7 +108,39 @@ def select_candidates(schedule, cfg, today, take_all=False):
 DATASET = os.path.join(STATE_DIR, "cache", "dataset.json")
 
 
-def attach_forecasts(results):
+def my_limit(rec, cfg):
+    """Your own maximum 청약한도 for this deal, and which brokerage gives it.
+
+    38.co.kr publishes one range per brokerage (멜콘: 대신증권 20,000~25,000주)
+    and never mentions 우대 tiers. Those belong to you and the brokerage, not to
+    the deal: 대신증권 온라인 우대 200% put 멜콘 at exactly 20,000 x 2 = 40,000주,
+    which pins the LOW end of 38's range as the 일반 base a tier multiplies.
+
+    Tiers live in the gitignored config.local.json as
+    {"my_limit_multiplier": {"대신증권": 2.0}} -- personal financial status has
+    no place in the published config. A brokerage with no entry falls back to
+    the top of 38's range, which is what every forecast used before this.
+
+    Returns {"broker", "shares", "multiplier"}; multiplier is None when the
+    figure is 38's standard limit rather than a personal one.
+    """
+    mult = cfg.get("my_limit_multiplier") or {}
+    best = None
+    for u in rec.get("underwriters", []):
+        name = u.get("name")
+        if name in mult and u.get("limit_low"):
+            m = float(mult[name])
+            cand = {"broker": name, "shares": int(u["limit_low"] * m), "multiplier": m}
+        elif u.get("limit_high"):
+            cand = {"broker": name, "shares": int(u["limit_high"]), "multiplier": None}
+        else:
+            continue
+        if best is None or cand["shares"] > best["shares"]:
+            best = cand
+    return best
+
+
+def attach_forecasts(results, cfg=None):
     """Add an expected-net-won estimate to GO/WATCH deals, where we can.
 
     Silently skipped when the historical dataset has not been built (it needs
@@ -126,7 +158,13 @@ def attach_forecasts(results):
         if r["verdict"]["verdict"] not in ("GO", "WATCH"):
             continue
         rec = r["rec"]
-        limit = max([u.get("limit_high") or 0 for u in rec.get("underwriters", [])] or [0])
+        # Forecast at YOUR limit: allocation and 증거금 both scale with it, so a
+        # 200% 우대 roughly doubles the expected won. The backtest and
+        # net_returns.py deliberately stay on 38's standard limit -- the screen
+        # is judged on the market, not on one person's account status.
+        mine = my_limit(rec, cfg or {})
+        rec["my_limit"] = mine
+        limit = mine["shares"] if mine else 0
         price, sub_end, refund = rec.get("final_price"), rec.get("subscription_end"), rec.get("refund_date")
         if not (limit and price and sub_end and refund and rec.get("institutional_ratio")):
             continue
@@ -211,7 +249,7 @@ def main():
             rec["subscription_end"] = row["subscription_end"]
         results.append({"rec": rec, "verdict": score.evaluate(rec, cfg)})
 
-    attach_forecasts(results)
+    attach_forecasts(results, cfg)
 
     os.makedirs(REPORT_DIR, exist_ok=True)
     md = report.render(results, run_date)

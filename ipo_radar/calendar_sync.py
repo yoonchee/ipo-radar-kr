@@ -237,6 +237,15 @@ def _limits_line(rec):
     return " · ".join(parts) or "미확인"
 
 
+def _my_limit_line(rec):
+    """'내 청약한도' when a 우대 tier applies -- 38's ranges never show it."""
+    ml = rec.get("my_limit") or {}
+    if not ml.get("multiplier"):
+        return []
+    return ["내 청약한도    %s %s주 (우대 %d%%)" % (
+        ml["broker"], "{:,}".format(ml["shares"]), round(ml["multiplier"] * 100))]
+
+
 def _forecast_lines(fc, indent="  "):
     if not fc:
         return []
@@ -280,6 +289,7 @@ def cheongyak_event(rec, verdict, fc, cfg):
     L.append("환불 / 상장   %s / %s" % (rec.get("refund_date") or "?",
                                         rec.get("listing_date") or "미정"))
     L.append("청약한도      %s" % _limits_line(rec))
+    L += _my_limit_line(rec)
     L += _forecast_lines(fc)
     L += ["", "배정은 비례만 계산한 하한값이며, 기회비용은 연 3% 기준입니다.",
           "투자 판단과 책임은 본인에게 있습니다.", "", _deal_url(rec)]
@@ -311,6 +321,7 @@ def maedo_event(rec, verdict, fc, cfg):
                                              rec.get("subscription_end") or "?",
                                              _brokers(rec)))
     L.append("환불          %s" % (rec.get("refund_date") or "?"))
+    L += _my_limit_line(rec)
     L += _forecast_lines(fc)
     L += ["", "※ 시초가는 08:30~09:00 장전 동시호가에서 결정됩니다.",
           "   시초가에 매도하려면 09:00 이전에 주문이 들어가 있어야 합니다.",

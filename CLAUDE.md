@@ -111,6 +111,16 @@ app with a sensitive scope — verification paperwork for a one-user script. Do 
 "upgrade" this to the REST API. Event UIDs are deterministic, so a repeat write
 replaces rather than duplicates even when calendar.json is missing.
 
+**우대 tiers are personal and 38 never shows them.** 38 publishes one 청약한도
+range per brokerage (멜콘: 대신증권 20,000~25,000주). The LOW end is the 일반 base
+a brokerage's 우대 tier multiplies — measured: 대신증권 온라인 우대 200% gave
+exactly 40,000주 / 246,000,000원 증거금. `run.py:my_limit()` applies
+`my_limit_multiplier` from `config.local.json` (`{"대신증권": 2.0}`) to the live
+forecast, alerts and calendar; a brokerage with no entry falls back to the top of
+38's range, as before. `backtest.py` and `net_returns.py` deliberately stay on
+38's standard limit — the screen is judged on the market, not on one account.
+So the report's EV is *your* EV, and is not comparable to the backtest's.
+
 `config.local.json` is merged over `config.json` and is gitignored — the alert
 address lives there, because `config.json` is published. A fresh checkout has no
 such file, so email alerts stay off until one is created; `--test-email` says so

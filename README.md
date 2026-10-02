@@ -126,6 +126,20 @@ personal to one machine belongs there, since `config.json` is public. The SMTP
 password is only ever in the keychain, read at send time; it is never in either
 config file nor in the launchd plist.
 
+### Your 우대 청약한도
+
+38.co.kr shows each brokerage's standard 청약한도 range and nothing about 우대
+tiers, which depend on your status at that brokerage. Record yours in
+`config.local.json` as a multiplier on the low end of 38's range:
+
+```json
+{ "my_limit_multiplier": { "대신증권": 2.0 } }
+```
+
+The forecast, alert email and calendar events then use your real limit and
+증거금 (멜콘 at 대신 200%: 40,000주, 246,000,000원). The backtest does not — it
+measures the screen, not your account.
+
 ### Calendar events
 
 With `calendar_sync` on, a new GO also gets two Google Calendar events:
