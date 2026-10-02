@@ -219,6 +219,10 @@ def _go_email_body(rec, verdict, fc, url):
             (" [%s]" % u["role"]) if u.get("role") else "",
             "{:,}".format(u["limit_low"]) if u.get("limit_low") else "?",
             "{:,}".format(u["limit_high"]) if u.get("limit_high") else "?"))
+    ml = rec.get("my_limit") or {}
+    if ml.get("multiplier"):
+        L.append("내 청약한도  %s %s주 (우대 %d%%)" % (
+            ml["broker"], "{:,}".format(ml["shares"]), round(ml["multiplier"] * 100)))
     if fc:
         L.append("")
         L.append("기대손익 (실질)")
