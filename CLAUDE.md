@@ -32,7 +32,7 @@ returned plausible but wrong company names for these pages. Parse the HTML direc
 python3 run.py --all --no-notify   # the dev loop: score everything, no notifications
 python3 run.py                     # normal run: lead-time window only, notifies new GOs
 python3 run.py --force             # re-notify deals already alerted
-python3 backtest.py --pages 18     # re-calibrate thresholds against realised outcomes
+python3 backtest.py                # re-calibrate thresholds against realised outcomes
 python3 net_returns.py --rate 3.0  # 실질손익 + rebuilds state/cache/dataset.json
 python3 evaluate.py                # walk-forward check on the forecast model
 cat state/latest.md                # most recent report
@@ -135,10 +135,13 @@ different strategy and is not what the thresholds are tuned against.
 
 Two things to keep in mind before re-fitting anything:
 
-- **The sample is regime-dependent.** Every deal in it listed after June 2023, when Korea
-  widened the listing-day opening range to 60–400% of 공모가. The ~86% baseline win rate is a
-  property of that regime. If the rules change, the thresholds need re-deriving, and the
-  historical numbers stop being a guide.
+- **The sample is regime-dependent.** Every deal in it listed on or after 2023-06-26,
+  when Korea widened the listing-day opening range to 60–400% of 공모가.
+  `backtest.py` cuts the sample by that date (`REGIME_START`), not by page count: the
+  old `--pages 18` was a sliding window that had let 15 pre-regime deals in, and would
+  have started dropping valid ones as new listings pushed them off the last page.
+  The ~86% baseline win rate is a property of that regime. If the rules change, the
+  thresholds need re-deriving, and the historical numbers stop being a guide.
 - **A high baseline flatters any screen.** Most deals in the sample were profitable at the
   open, so the screen's job is avoiding the bad tail, not finding rare winners. Judge changes
   by what they do to the PASS bucket, not just the GO bucket.
@@ -196,9 +199,17 @@ What the harness established, and what you should not undo:
 - **The model is only calibrated at 기관경쟁률 >= 600** (`CALIBRATED_MIN_INST`). There
   bias is +2.5만 and terciles are monotonic. Below 300 bias is +178.9만 — weak demand
   means a huge allocation, and 28 examples cannot pin that tail down. Never quote an
-  EV for a low-competition deal without the warning the report already prints.
+  EV for a low-competition deal (see below: the outputs no longer print one).
 - Always show the bootstrap CI. For 니어스랩 the EV was -5,456원 against a CI of
   ±100,000원; the point estimate alone would have been a lie of precision.
+- **But the bootstrap CI is not an outcome range** — it is the uncertainty of the
+  *mean*. Labelled "90% 신뢰구간" it was read as where the deal would land, and none
+  of the 13 deals listed 2026-08-13..10-22 finished inside it. Every output shows it
+  as `평균 추정오차` next to `결과 범위` (the analogues' weighted p10~p90), which
+  walk-forward held 81% of outcomes at >= 600 against a nominal 80%.
+- **Below 600 the EV and 흑자확률 are withheld, not just flagged.** There 결과 범위
+  held 61% and 흑자확률 ran 75% against 66% realised. Output shows the range and a
+  warning only. Do not restore the point estimate for low-demand deals.
 
 Note the caveat the numbers cannot remove: ~17 variants were scored against the same
 walk-forward sequence, which is selection on the holdout. That is why the bar was

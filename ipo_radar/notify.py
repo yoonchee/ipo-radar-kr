@@ -227,15 +227,20 @@ def _go_email_body(rec, verdict, fc, url):
         L.append("")
         L.append("기대손익 (실질)")
         L.append("  투입증거금  %s원" % "{:,.0f}".format(fc.get("capital") or 0))
-        L.append("  기대손익  %s" % _won(fc["ev"]))
-        if fc.get("ev_lo") is not None:
-            L.append("  90%% 신뢰구간  %s ~ %s%s" % (
-                _won(fc["ev_lo"]), _won(fc["ev_hi"]),
-                "   [0을 포함 — 평균을 양(+)으로 단정할 수 없음]"
-                if fc["ev_lo"] < 0 else ""))
-        L.append("  흑자확률  %.0f%%" % fc.get("win_prob", 0))
         if not fc.get("calibrated", True):
-            L.append("  ⚠ 기관경쟁률이 모형 검증 범위 밖 — EV 신뢰도 낮음")
+            if fc.get("p10") is not None:
+                L.append("  결과 범위  %s ~ %s (10~90%%)" % (_won(fc["p10"]), _won(fc["p90"])))
+            L.append("  ⚠ 기관경쟁률 600:1 미만 — 모형 검증 범위 밖이라 기대손익·흑자확률 생략")
+        else:
+            L.append("  기대손익  %s" % _won(fc["ev"]))
+            if fc.get("p10") is not None:
+                L.append("  결과 범위  %s ~ %s (10~90%%)" % (_won(fc["p10"]), _won(fc["p90"])))
+            if fc.get("ev_lo") is not None:
+                L.append("  평균 추정오차  %s ~ %s (90%%)%s" % (
+                    _won(fc["ev_lo"]), _won(fc["ev_hi"]),
+                    "   [0을 포함 — 평균을 양(+)으로 단정할 수 없음]"
+                    if fc["ev_lo"] < 0 else ""))
+            L.append("  흑자확률  %.0f%%" % fc.get("win_prob", 0))
     if verdict and verdict.get("reasons"):
         L.append("")
         L.append("판정 근거")

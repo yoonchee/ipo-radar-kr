@@ -100,19 +100,29 @@ def render(results: List[Dict], run_date: str) -> str:
             L.append("최대 청약한도로 청약했을 때의 예상 손익. 배정은 비례만 계산한 하한값이며, "
                      "기회비용은 연 3% 기준입니다.")
             L.append("")
-            L.append("| 종목 | 투입증거금 | 예상배정 | 기대손익 | 90% 신뢰구간 | 흑자확률 |")
-            L.append("|---|---:|---:|---:|---|---:|")
+            L.append("결과 범위는 개별 결과의 10~90% 구간, 평균 추정오차는 기대손익(평균) 자체의 "
+                     "90% 부트스트랩 구간입니다.")
+            L.append("")
+            L.append("| 종목 | 투입증거금 | 예상배정 | 기대손익 | 결과 범위 (10~90%) | 평균 추정오차 | 흑자확률 |")
+            L.append("|---|---:|---:|---:|---|---|---:|")
             for r in go + watch:
                 f = r.get("forecast")
                 if not f:
                     continue
-                L.append("| %s | %s | %d주 | %s | %s ~ %s | %.0f%% |"
+                spread = "%s ~ %s" % (_won_signed(f["p10"]), _won_signed(f["p90"]))
+                if not f.get("calibrated"):
+                    # Out of the validated range: the spread only, no point estimate.
+                    L.append("| %s | %s | %d주 | ⚠ 생략 | %s | - | - |"
+                             % (r["rec"].get("name"), _man(f["capital"]), f["shares_med"], spread))
+                    continue
+                L.append("| %s | %s | %d주 | %s | %s | %s ~ %s | %.0f%% |"
                          % (r["rec"].get("name"), _man(f["capital"]), f["shares_med"],
-                            _won_signed(f["ev"]), _won_signed(f["ev_lo"]),
+                            _won_signed(f["ev"]), spread, _won_signed(f["ev_lo"]),
                             _won_signed(f["ev_hi"]), f["win_prob"]))
             L.append("")
             if any(not r["forecast"].get("calibrated") for r in go + watch if r.get("forecast")):
-                L.append("> ⚠ 기관경쟁률 600:1 미만인 종목의 기대손익은 검증 구간 밖이라 신뢰할 수 없습니다.")
+                L.append("> ⚠ 기관경쟁률 600:1 미만인 종목은 모형 검증 범위 밖입니다. walk-forward에서 결과 범위가 "
+                         "80% 대신 61%만 맞췄고 흑자확률은 과대평가됐으므로, 기대손익과 흑자확률은 생략합니다.")
                 L.append("")
 
         L.append("### 판정 근거")

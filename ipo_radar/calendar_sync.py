@@ -253,14 +253,22 @@ def _forecast_lines(fc, indent="  "):
     # 만원, matching the report -- 15,375만 reads faster than 153,750,000.
     L.append("%s투입증거금    %s만원" % (
         indent, "{:,.0f}".format((fc.get("capital") or 0) / 10000.0)))
+    if not fc.get("calibrated", True):
+        # Below 600:1 a point EV and a 흑자확률 are worse than nothing: walk-
+        # forward, the 10~90% range held 61% of outcomes instead of 80%, and
+        # 흑자확률 ran 9 points hot. Show only the spread, and say why.
+        if fc.get("p10") is not None:
+            L.append("%s결과 범위     %s ~ %s (10~90%%)" % (indent, _won(fc["p10"]), _won(fc["p90"])))
+        L.append("⚠ 기관경쟁률 600:1 미만 — 모형 검증 범위 밖이라 기대손익·흑자확률 생략.")
+        return L
     L.append("%s기대손익      %s" % (indent, _won(fc["ev"])))
+    if fc.get("p10") is not None:
+        L.append("%s결과 범위     %s ~ %s (10~90%%)" % (indent, _won(fc["p10"]), _won(fc["p90"])))
     if fc.get("ev_lo") is not None:
-        L.append("%s90%% 신뢰구간  %s ~ %s" % (indent, _won(fc["ev_lo"]), _won(fc["ev_hi"])))
+        L.append("%s평균 추정오차 %s ~ %s (90%%)" % (indent, _won(fc["ev_lo"]), _won(fc["ev_hi"])))
     L.append("%s흑자확률      %.0f%%" % (indent, fc.get("win_prob", 0)))
     if fc.get("ev_lo") is not None and fc["ev_lo"] < 0:
-        L.append("⚠ 신뢰구간이 0을 포함 — 평균을 양(+)으로 단정할 수 없습니다.")
-    if not fc.get("calibrated", True):
-        L.append("⚠ 기관경쟁률이 모형 검증 범위 밖 — EV 신뢰도 낮음.")
+        L.append("⚠ 평균 추정오차가 0을 포함 — 평균을 양(+)으로 단정할 수 없습니다.")
     return L
 
 
