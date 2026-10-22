@@ -86,7 +86,8 @@ Three signals, all knowable *before* the subscription window opens:
    overwhelmed the range.
 3. **의무보유확약** — the share of institutional allocation voluntarily locked up,
    weighted toward 3/6-month tenors. 15일 확약 unlocks before you'd care; 3개월+
-   keeps that stock off the tape on listing day.
+   keeps that stock off the tape on listing day. The long-tenor bonus counts only
+   when 확약 itself is at least 5% — a long share of a near-zero 확약 holds nothing back.
 
 Verdicts: **GO** (score ≥ 6, no blockers) · **WATCH** (≥ 3) · **PASS** · **PENDING**
 (수요예측 not published yet) · **EXCLUDED** (스팩/코넥스).

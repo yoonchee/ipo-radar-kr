@@ -83,6 +83,13 @@ relative to the 희망공모가밴드, and 의무보유확약 weighted toward lo
 matters because 15일 확약 unlocks before listing-day selling pressure is relevant while 3/6개월
 확약 genuinely removes supply — the headline 확약 percentage alone is misleading.
 
+But the tenor share is a share *of* 확약, so the +1 needs 확약 >= `watch_lockup_pct` too.
+Ungated, 80% of a 0.87% 확약 earned it and promoted 39 historical deals to GO; together
+they lost 264만 net, and GO's win rate fell from 99% to 93%. Note that `backtest.py`
+scores with an empty `lockup_breakdown` (its list pages carry no tenor), so it never
+sees this bonus at all. Checking a tenor rule means scoring the detail-page cache
+`net_returns.py` builds (`tenor3` in dataset.json), which is how this one was found.
+
 Thresholds live in `config.json` and were set from `backtest.py`, not from intuition.
 
 `calendar_sync.py` creates two Google Calendar events per GO — 청약 on the last
