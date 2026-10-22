@@ -13,8 +13,8 @@ Writes three things:
     state/backtest/<date>.html  + latest.html   self-contained visual report
     stdout                                      the same summary, as text
 
-    ./backtest.py --pages 18
-    ./backtest.py --pages 18 --no-write   # stdout only
+    ./backtest.py                # every listing since the 2023-06-26 regime change
+    ./backtest.py --no-write     # stdout only
 """
 
 import argparse
@@ -33,7 +33,8 @@ OUT_DIR = os.path.join(ROOT, "state", "backtest")
 RATIO_BUCKETS = [(0, 100), (100, 300), (300, 600), (600, 800), (800, 1200), (1200, 10 ** 9)]
 LOCKUP_BUCKETS = [(0, 5, "<5%"), (5, 10, "5~10%"), (10, 20, "10~20%"), (20, 10 ** 9, "≥20%")]
 BAND_POSITIONS = (("above", "밴드 상단 초과"), ("top", "밴드 상단"),
-                  ("within", "밴드 내"), ("bottom", "밴드 하단"))
+                  ("within", "밴드 내"), ("bottom", "밴드 하단"),
+                  ("below", "밴드 하단 미만"))
 
 
 def _pct(xs):
@@ -61,21 +62,48 @@ def _stats(rets):
     }
 
 
-def collect(pages):
-    """Join 수요예측결과 against 신규상장 by company name."""
+# 2023-06-26 widened the listing-day opening range to 60~400% of 공모가. Every
+# rate in the backtest is a property of that regime, so the sample is cut by
+# date, not by page count: a fixed --pages 18 is a sliding window that once
+# let 15 March-June 2023 deals in, and would now start dropping valid ones.
+REGIME_START = "2023-06-26"
+
+
+def collect(since=REGIME_START, max_pages=60):
+    """Join 수요예측결과 against 신규상장 by company name, for listings >= since."""
     demand, listings = {}, {}
-    for p in range(1, pages + 1):
-        for row in parse.parse_demand_results(fetch.fetch(fetch.BASE + "?o=r1&page=%d" % p)):
-            demand.setdefault(row["name"], row)
-        for row in parse.parse_new_listings(fetch.fetch(fetch.BASE + "?o=nw&page=%d" % p)):
+    nw_pages = 0
+    for p in range(1, max_pages + 1):
+        rows = parse.parse_new_listings(fetch.fetch(fetch.BASE + "?o=nw&page=%d" % p))
+        nw_pages = p
+        for row in rows:
             listings.setdefault(row["name"], row)
-        sys.stderr.write("  page %d/%d\r" % (p, pages))
+        sys.stderr.write("  신규상장 page %d\r" % p)
+        dates = [r["listing_date"] for r in rows if r.get("listing_date")]
+        if not dates or min(dates) < since:
+            break
+    sys.stderr.write("\n")
+
+    # 수요예측 runs a week or two before listing, so the deals we want sit on
+    # roughly the same pages of ?o=r1. Stop once every wanted listing has its
+    # demand row; the slack bounds the hunt for names 38 spells differently.
+    wanted = {n for n, l in listings.items()
+              if (l.get("listing_date") or "") >= since and not parse.is_spac(n)}
+    for p in range(1, min(max_pages, nw_pages + 3) + 1):
+        rows = parse.parse_demand_results(fetch.fetch(fetch.BASE + "?o=r1&page=%d" % p))
+        for row in rows:
+            demand.setdefault(row["name"], row)
+        sys.stderr.write("  수요예측결과 page %d\r" % p)
+        if not rows or wanted <= set(demand):
+            break
     sys.stderr.write("\n")
 
     joined = []
     for name, d in demand.items():
         l = listings.get(name)
         if not l or l.get("open_vs_offer_pct") is None:
+            continue
+        if (l.get("listing_date") or "") < since:
             continue
         if parse.is_spac(name):
             continue
@@ -107,6 +135,8 @@ def band_pos(r):
         return "top"
     if f == low:
         return "bottom"
+    if f < low:
+        return "below"
     return "within"
 
 
@@ -195,13 +225,15 @@ def print_summary(agg):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pages", type=int, default=15, help="list pages to pull (20 rows each)")
+    ap.add_argument("--since", default=REGIME_START,
+                    help="earliest listing date to include (default: the 2023-06-26 regime change)")
+    ap.add_argument("--max-pages", type=int, default=60, help="safety cap on list pages per source")
     ap.add_argument("--no-write", action="store_true", help="print only, write no files")
     args = ap.parse_args()
 
     cfg = load_config()
-    print("Fetching %d pages of 수요예측결과 + 신규상장 ..." % args.pages)
-    rows = collect(args.pages)
+    print("Fetching 수요예측결과 + 신규상장 back to %s ..." % args.since)
+    rows = collect(args.since, args.max_pages)
     if not rows:
         print("No joined rows -- site layout may have changed.")
         return 1
@@ -217,7 +249,7 @@ def main():
         "generated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
         "source": "38.co.kr (수요예측결과 + 신규상장)",
         "return_metric": "시초/공모 — offer price to opening auction, before fees and tax",
-        "pages_fetched": args.pages,
+        "since": args.since,
         "config": cfg,
         "aggregates": agg,
         "deals": rows,

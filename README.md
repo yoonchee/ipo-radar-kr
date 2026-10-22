@@ -180,8 +180,8 @@ later run.
 sell into the opening auction.
 
 ```bash
-python3 backtest.py --pages 18            # writes JSON + HTML, prints the summary
-python3 backtest.py --pages 18 --no-write  # stdout only
+python3 backtest.py             # every listing since 2023-06-26; writes JSON + HTML, prints the summary
+python3 backtest.py --no-write  # stdout only
 open state/backtest/latest.html            # the visual report
 ```
 
@@ -219,8 +219,11 @@ Each signal is monotonic on its own:
 |---|---:|---:|---:|
 | above band | 88 | 90% | +75% |
 | at band top | 113 | 89% | +78% |
-| within band | 24 | 79% | +15% |
 | **at band bottom** | 18 | **50%** | **+1%** |
+| below band (repriced down) | 23 | 74% | +17% |
+
+No deal in the sample priced strictly inside its band: every one off the top or bottom
+was repriced *below* it. Exactly at the bottom is the weaker signal of the two.
 
 `go_institutional_ratio` is set to **600** rather than 800: at 600 the screen takes
 117 deals at a 99% win rate instead of 94 at 100%, with near-identical median return.
@@ -291,9 +294,16 @@ adds an expected net-won estimate: what this subscription is likely to pay, in w
 with an honest interval around it.
 
 ```
-| 종목 | 투입증거금 | 예상배정 | 기대손익 | 90% 신뢰구간 | 흑자확률 |
-| 니어스랩 | 26,780만 | 8주 | -5,456원 | -115,646원 ~ +76,489원 | 60% |
+| 종목 | 투입증거금 | 예상배정 | 기대손익 | 결과 범위 (10~90%) | 평균 추정오차 | 흑자확률 |
+| 인텔리빅스 | 27,900만 | 22주 | +46,912원 | -91,726원 ~ +268,281원 | +13,206원 ~ +78,079원 | 63% |
 ```
+
+Two ranges, answering different questions. **결과 범위** is where *this deal's* result
+should land 8 times in 10 — the analogues' own spread. **평균 추정오차** is the bootstrap
+interval of the EV itself: how sure the average is, not where any one deal ends up.
+Read as an outcome range it is badly wrong — none of the 13 deals listed 2026-08-13 to
+10-22 finished inside it. Walk-forward over 203 deals, 결과 범위 held 81% of outcomes at
+기관경쟁률 ≥ 600 (nominal 80%), and 흑자확률 was 82% against 85% realised.
 
 At the moment 수요예측 publishes, two unknowns stand between a verdict and a cash
 outcome: how hard *retail* will compete (which sets your allocation) and where the
@@ -311,7 +321,7 @@ and **the daily report simply omits the 기대손익 section** — the screen ne
 on it. To build or refresh it:
 
 ```bash
-python3 backtest.py --pages 18     # 1. 수요예측 features + realised 시초/공모
+python3 backtest.py                # 1. 수요예측 features + realised 시초/공모
 python3 net_returns.py --rate 3.0  # 2. joins detail pages -> dataset.json
 python3 evaluate.py                # 3. optional: re-check the model walk-forward
 ```
@@ -354,10 +364,13 @@ only rank correlation moves, monotonically, so the peak is the edge of a noisy c
 
 - **It is only calibrated at 기관경쟁률 ≥ 600.** There the bias is +2.5만 and terciles
   are monotonic. Below 300 the bias is +178.9만 — weak demand means a huge allocation,
-  and 28 historical examples cannot pin that tail down. The report prints a warning
-  rather than a number it cannot stand behind.
+  and 28 historical examples cannot pin that tail down. Walk-forward, 결과 범위 held
+  only 61% of outcomes there and 흑자확률 ran 75% against 66% realised; 엘리스그룹
+  (+130만 forecast, −97만 actual) and 인제니아 (+168만, −1,315만) are what that looks
+  like. So below 600 the report shows the range alone and withholds EV and 흑자확률.
 - **The interval is the point.** For 니어스랩 the EV was −5,456원 against a CI of
-  roughly ±100,000원. The point estimate alone would be a lie of precision.
+  roughly ±100,000원. The point estimate alone would be a lie of precision. Show both
+  ranges, and never label the bootstrap one as where the outcome will land.
 - ~17 variants were scored against the same walk-forward sequence, which is selection
   on the holdout. That is why the bar for adopting one was "materially beats the
   incumbent", not "best marginal edge".

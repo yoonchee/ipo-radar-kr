@@ -51,6 +51,10 @@ def _price_position(rec: Dict) -> Optional[str]:
         return "top"
     if final == low:
         return "bottom"
+    if final < low:
+        # Repriced under the band (네오사피엔스 10,000 vs 13,800~15,800). Not
+        # "within": that lumped the weakest pricing in with mid-band deals.
+        return "below"
     return "within"
 
 
@@ -98,7 +102,9 @@ def evaluate(rec: Dict, config: Optional[Dict] = None) -> Dict:
         reasons.append("확정공모가 %s — inside band" % _fmt(rec.get("final_price")))
     elif pos == "bottom":
         blockers.append("확정공모가 %s — at band bottom (weak demand)" % _fmt(rec.get("final_price")))
-    if cfg["require_price_at_band_top"] and pos in ("within", "bottom"):
+    elif pos == "below":
+        blockers.append("확정공모가 %s — below band (repriced down)" % _fmt(rec.get("final_price")))
+    if cfg["require_price_at_band_top"] and pos in ("within", "bottom", "below"):
         blockers.append("price did not reach band top")
 
     # --- 의무보유확약 ------------------------------------------------------

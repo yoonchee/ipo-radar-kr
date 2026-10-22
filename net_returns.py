@@ -173,7 +173,7 @@ def _bucket(items):
     }
 
 
-BAND_POS = {"above": 2, "top": 1, "within": 0, "bottom": -1}
+BAND_POS = {"above": 2, "top": 1, "within": 0, "bottom": -1, "below": -2}
 
 
 def build_dataset(rows):
