@@ -123,9 +123,14 @@ def evaluate(rec: Dict, config: Optional[Dict] = None) -> Dict:
     lts = long_tenor_share(rec.get("lockup_breakdown") or {})
     if lts is not None and (rec.get("lockup_pct") or 0) > 0:
         pct = lts * 100
-        if lts >= cfg["strong_long_tenor_share"]:
+        if lts >= cfg["strong_long_tenor_share"] and (lockup or 0) >= cfg["watch_lockup_pct"]:
             score += 1
             reasons.append("확약 중 3개월 이상 %.1f%% — supply held back" % pct)
+        elif lts >= cfg["strong_long_tenor_share"]:
+            # A share of almost nothing: 80% of a 0.87% 확약 holds back 0.7% of
+            # the institutional book. Ungated, this bonus promoted 39 deals to
+            # GO that lost 264만 net together, at 93% win against 99%.
+            reasons.append("확약 중 3개월 이상 %.1f%% — but 확약 itself is low, no bonus" % pct)
         else:
             reasons.append("확약 중 3개월 이상 %.1f%% — mostly short tenor" % pct)
 
