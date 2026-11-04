@@ -129,12 +129,21 @@ def my_limit(rec, cfg):
     # match would miss it silently, falling back to the standard limit.
     norm = lambda n: (n or "").strip()[:-2] if (n or "").strip().endswith("증권") else (n or "").strip()
     mult = {norm(k): v for k, v in (cfg.get("my_limit_multiplier") or {}).items()}
+    # 38's low end is not always the 일반 base. 동원파츠 (no 2339) read
+    # 삼성증권 12,500~15,000주 on 38 while 삼성 itself showed 일반 25,000주, so
+    # `limit_base_override` ({"<no>": {"<broker>": base}}) corrects 38's figure
+    # for one deal. It replaces the base, not the result: the 우대 tier still
+    # multiplies it. One measurement is not a pattern -- don't turn this into a
+    # per-brokerage correction until more deals disagree the same way.
+    base_fix = {norm(k): int(v) for k, v in
+                ((cfg.get("limit_base_override") or {}).get(rec.get("no"), {}) or {}).items()}
     best = None
     for u in rec.get("underwriters", []):
         name = u.get("name")
-        if norm(name) in mult and u.get("limit_low"):
+        low = base_fix.get(norm(name)) or u.get("limit_low")
+        if norm(name) in mult and low:
             m = float(mult[norm(name)])
-            cand = {"broker": name, "shares": int(u["limit_low"] * m), "multiplier": m}
+            cand = {"broker": name, "shares": int(low * m), "multiplier": m}
         elif u.get("limit_high"):
             cand = {"broker": name, "shares": int(u["limit_high"]), "multiplier": None}
         else:
