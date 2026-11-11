@@ -156,15 +156,17 @@ Two things to keep in mind before re-fitting anything:
 ## 시초/공모 percentages are not money — use net_returns.py
 
 `backtest.py` measures the price move. `net_returns.py` measures the trade, and the two
-disagree about the headline. Subscribing at max 청약한도 to *every* deal loses 1,857만 won
-over the sample despite 86% of deals rising at the open, because 증거금 (50% of 청약한도 ×
-확정공모가) sits idle from 청약일 to 환불일, and because weak deals — the ones nobody wants —
-fill you with hundreds of shares right before they fall. GO earns +10.01% excess return;
-PASS earns −22.80%.
+disagree about the headline. Subscribing at max 청약한도 to *every* deal loses 3,007만 won
+over the sample (n=244, rebuilt 2026-11-12) despite 84% of deals rising at the open,
+because 증거금 (50% of 청약한도 × 확정공모가) sits idle from 청약일 to 환불일, and because weak deals — the ones nobody wants —
+fill you with hundreds of shares right before they fall. GO earns +11.93% excess return;
+PASS earns −32.65%.
 
 Two consequences, both already encoded:
 
-- **WATCH does not notify.** It measured +0.03% excess return over 69 deals, which is zero.
+- **WATCH does not notify.** It measured +1.67% over 75 deals, but one lucky deal carries
+  that: 이에스티 (630:1, 확약 0.24%) drew 380주 when the forecast expected 16 and happened to
+  open +28%. Without it WATCH is +0.78% over 74 deals, which is zero.
   `run.py` raises a banner only for a newly-GO deal. Don't "fix" this by restoring a summary
   notification.
 - **배정 is 비례 only** — `floor(청약한도 / 비례경쟁률)`. 균등 is excluded because 청약건수 is
@@ -190,15 +192,19 @@ outcome to learn from. Getting this wrong invalidates everything downstream.
 
 What the harness established, and what you should not undo:
 
-- **Hard-bin comparables were the worst model tested** (MAE 62.2만 vs ~41 for
-  everything else, rank corr 0.307 vs 0.460). Smooth kernel weighting beat it because
-  it uses all 234 deals instead of 43 in-or-out.
-- **No third feature beat the shipped model on either metric.** 3개월+ tenor share,
-  band position, and recency decay all scored worse than it on both MAE and rank
-  correlation. Against their own h=1.0 base the picture is mixed — tenor3 raises rho
-  while worsening MAE, recency does the reverse — which is exactly the noise the
-  "materially beats" bar exists to filter. Two features is not laziness; it is the
-  measured optimum at n=234. Adding a third needs a walk-forward win, not a
+- **Hard-bin comparables were the worst model tested** (MAE 65.7만 vs ~45 for
+  everything else, rank corr 0.252 vs 0.369 shipped; n=167 scored, 2026-11-12).
+  Smooth kernel weighting beat it because it uses every past deal instead of a
+  handful in-or-out. The figures were 62.2/~41 and 0.307/0.460 at an earlier
+  build; that drop is not recent deals being mis-ranked — targets listed before
+  2026-10-01 score 0.372 and the 14 since score 0.367.
+- **No third feature beat the shipped model on rank correlation.** 3개월+ tenor share,
+  band position, and recency decay all scored lower rho, and none moved MAE by more
+  than 0.4만 (band position: 45.1 vs 45.5). Against their own h=1.0 base the picture
+  is mixed — tenor3 raises rho while worsening MAE, band position holds MAE but
+  drops rho — which is exactly the noise the "materially beats" bar exists to
+  filter. Two features is not laziness; it is the
+  measured optimum at this sample size. Adding a third needs a walk-forward win, not a
   plausible story.
 - **Bandwidth 0.6 is deliberately not the argmax.** MAE was flat across the whole
   sweep and only rank correlation moved, monotonically — so the peak is the edge of a
@@ -213,10 +219,18 @@ What the harness established, and what you should not undo:
   *mean*. Labelled "90% 신뢰구간" it was read as where the deal would land, and none
   of the 13 deals listed 2026-08-13..10-22 finished inside it. Every output shows it
   as `평균 추정오차` next to `결과 범위` (the analogues' weighted p10~p90), which
-  walk-forward held 81% of outcomes at >= 600 against a nominal 80%.
+  walk-forward held 80% of outcomes at >= 600 against a nominal 80% — 86% where
+  확약 >= 2%, but only 52% where it is below 1% (next bullet but one).
 - **Below 600 the EV and 흑자확률 are withheld, not just flagged.** There 결과 범위
   held 61% and 흑자확률 ran 75% against 66% realised. Output shows the range and a
   warning only. Do not restore the point estimate for low-demand deals.
+- **The same applies at >= 600 when 확약 is below 1%** (`CALIBRATED_MIN_LOCK`). Over
+  23 such deals 결과 범위 held 52% (10 outcomes below p10), 흑자확률 read 75% against
+  43% realised, and bias was −15.4만. Retail often stays away from them — 이에스티
+  was allocated 380주 against a median forecast of 16 — so analogues understate the
+  allocation. These deals cannot reach GO (GO needs 확약 >= `watch_lockup_pct`), so
+  only the report's WATCH rows are affected. The 1% cut was chosen on the same
+  holdout it was measured on, and 1~2% (n=6) was left alone for lack of data.
 
 Note the caveat the numbers cannot remove: ~17 variants were scored against the same
 walk-forward sequence, which is selection on the holdout. That is why the bar was

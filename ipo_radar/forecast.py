@@ -45,6 +45,25 @@ DEFAULT = {
 # 28 historical examples cannot pin that tail down.
 CALIBRATED_MIN_INST = 600.0
 
+# Strong demand does not rescue a deal nobody locks up. At >=600 with 확약 < 1%,
+# walk-forward (n=23, 2026-11): the 10~90% range held 52% of outcomes, 10 of
+# them below p10; 흑자확률 read 75% against 43% realised; bias -15.4만. Retail
+# often stays away (이에스티: 380주 allocated vs a median forecast of 16), so the
+# analogues understate the allocation. 1~2% looked similar but n=6 decides
+# nothing. The 1% cut was chosen on the same holdout it was measured on.
+# Such deals cannot reach GO (GO needs 확약 >= watch_lockup_pct), so this only
+# affects what the report shows for WATCH.
+CALIBRATED_MIN_LOCK = 1.0
+
+
+def uncalibrated_reason(target: Dict) -> Optional[str]:
+    """Why the point estimate is withheld, or None when it is trustworthy."""
+    if target["inst"] < CALIBRATED_MIN_INST:
+        return "기관경쟁률 600:1 미만"
+    if (target.get("lock") or 0.0) < CALIBRATED_MIN_LOCK:
+        return "기관경쟁률은 높지만 의무보유확약 1% 미만"
+    return None
+
 # Per-feature scale, so bandwidth is comparable across features. Set from the
 # spread actually observed in the sample rather than fitted.
 SCALE = {"linst": 0.45, "lock": 12.0, "tenor3": 0.28, "bpos": 1.0}
@@ -142,7 +161,8 @@ def predict(target: Dict, history: List[Dict], cfg: Optional[Dict] = None,
 
     out = {
         "ev": ev,
-        "calibrated": target["inst"] >= CALIBRATED_MIN_INST,
+        "calibrated": uncalibrated_reason(target) is None,
+        "uncalibrated_reason": uncalibrated_reason(target),
         "win_prob": win,
         "n_eff": n_eff,
         "n_history": len(history),

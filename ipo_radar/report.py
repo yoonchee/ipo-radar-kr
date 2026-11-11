@@ -120,9 +120,17 @@ def render(results: List[Dict], run_date: str) -> str:
                             _won_signed(f["ev"]), spread, _won_signed(f["ev_lo"]),
                             _won_signed(f["ev_hi"]), f["win_prob"]))
             L.append("")
-            if any(not r["forecast"].get("calibrated") for r in go + watch if r.get("forecast")):
+            reasons = {r["forecast"].get("uncalibrated_reason") or "기관경쟁률 600:1 미만"
+                       for r in go + watch
+                       if r.get("forecast") and not r["forecast"].get("calibrated")}
+            if "기관경쟁률 600:1 미만" in reasons:
                 L.append("> ⚠ 기관경쟁률 600:1 미만인 종목은 모형 검증 범위 밖입니다. walk-forward에서 결과 범위가 "
                          "80% 대신 61%만 맞췄고 흑자확률은 과대평가됐으므로, 기대손익과 흑자확률은 생략합니다.")
+                L.append("")
+            if reasons - {"기관경쟁률 600:1 미만"}:
+                L.append("> ⚠ 기관경쟁률 600:1 이상이어도 의무보유확약이 1% 미만이면 개인 청약이 저조해 배정이 "
+                         "크게 늘 수 있습니다. walk-forward에서 결과 범위가 52%만 맞췄고 흑자확률 75% 대비 실제 "
+                         "43%였으므로, 기대손익과 흑자확률은 생략합니다.")
                 L.append("")
 
         L.append("### 판정 근거")
