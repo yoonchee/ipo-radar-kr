@@ -79,10 +79,16 @@ def _float(s: Optional[str]) -> Optional[float]:
 
 
 def _ratio(s: Optional[str]) -> Optional[float]:
-    """'743.49:1' -> 743.49"""
+    """'743.49:1' -> 743.49; a bare '187.10' -> 187.10.
+
+    38 sometimes drops the ':1' (엠비디, 2026-11: '187.10'). A bare number is
+    accepted only when it is the whole cell, so stray digits in surrounding
+    text are never mistaken for a ratio.
+    """
     if not s:
         return None
-    m = re.search(r"([\d,]+(?:\.\d+)?)\s*:\s*1", s)
+    m = (re.search(r"([\d,]+(?:\.\d+)?)\s*:\s*1", s)
+         or re.fullmatch(r"\s*([\d,]+(?:\.\d+)?)\s*", s))
     if not m:
         return None
     return float(m.group(1).replace(",", ""))
