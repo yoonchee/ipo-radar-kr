@@ -44,21 +44,30 @@ MARGIN_RATE_DEFAULT = 0.50   # 일반청약자 청약증거금율; parsed per de
 EQUAL_POOL_SHARE = 0.50      # 균등 is >= 50% of the 일반청약자 pool by rule since 2021
 
 
-def cached_detail(no):
+def cached_detail(no, listing_date=None):
+    """The detail page, fetched once it is final and never again.
+
+    A page saved on or before the deal's 상장일 is a snapshot of a deal still in
+    progress: 니어스랩, 해치텍, 기도산업 were cached on 2026-08-12, their 청약
+    day, with an empty 청약경쟁률, and read for three months as "38 never
+    published it". So a cache entry counts only if it postdates listing.
+    """
     os.makedirs(CACHE, exist_ok=True)
     path = os.path.join(CACHE, "%s.html" % no)
     if os.path.exists(path) and os.path.getsize(path) > 2000:
-        with open(path, encoding="utf-8") as fh:
-            return fh.read()
+        saved = datetime.date.fromtimestamp(os.path.getmtime(path)).isoformat()
+        if not listing_date or saved > listing_date:
+            with open(path, encoding="utf-8") as fh:
+                return fh.read()
     raw = fetch.fetch_detail_page(no)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(raw)
     return raw
 
 
-def extract(no):
+def extract(no, listing_date=None):
     """Pull the subscription economics out of one detail page."""
-    raw = cached_detail(no)
+    raw = cached_detail(no, listing_date)
     txt = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", raw)))
     rec = parse.parse_detail(raw, no)
 
@@ -128,7 +137,9 @@ def compute(deal, ec, rate, subscribers):
     if not price:
         return {"skip": "확정공모가 없음"}
     if not prop:
-        return {"skip": "청약경쟁률 미공개 (배정 계산 불가)"}
+        # Every listed deal had a 청약. An empty figure here is a page fetched
+        # too early or a gap on 38 -- a data problem, not a fact about the deal.
+        return {"skip": "청약경쟁률 없음 — 상장된 종목이므로 데이터 누락 (페이지 확인)"}
     if ec.get("prop_source") == "estimated" and "리츠" in (deal.get("name") or ""):
         # 2 x 통합 was measured on deals publishing both figures, and no REIT in
         # the sample does -- whether their 균등 split matches is unverified.
@@ -287,7 +298,7 @@ def main():
     rows, skipped = [], []
     for i, d in enumerate(deals, 1):
         try:
-            ec = extract(d["no"])
+            ec = extract(d["no"], d.get("listing_date"))
         except Exception as exc:
             skipped.append((d["name"], str(exc)[:40]))
             continue

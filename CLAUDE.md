@@ -239,17 +239,17 @@ Two things to keep in mind before re-fitting anything:
 ## 시초/공모 percentages are not money — use net_returns.py
 
 `backtest.py` measures the price move. `net_returns.py` measures the trade, and the two
-disagree about the headline. Subscribing at max 청약한도 to *every* deal loses 2,872만 won
-over the sample (n=252, rebuilt 2026-11-12) despite 84% of deals rising at the open,
+disagree about the headline. Subscribing at max 청약한도 to *every* deal loses 3,132만 won
+over the sample (n=255, rebuilt 2026-11-12) despite 84% of deals rising at the open,
 because 증거금 (50% of 청약한도 × 확정공모가) sits idle from 청약일 to 환불일, and because
 weak deals — the ones nobody wants — fill you with hundreds of shares right before they
-fall. GO earns +12.17% excess return; PASS earns −30.50%.
+fall. GO earns +12.17% excess return; PASS earns −30.79%.
 
 Two consequences, both already encoded:
 
-- **WATCH does not notify.** It measured +1.85% over 77 deals, but one lucky deal carries
+- **WATCH does not notify.** It measured +1.74% over 78 deals, but one lucky deal carries
   much of that: 이에스티 (630:1, 확약 0.24%) drew 380주 when the forecast expected 16 and
-  happened to open +28%. Without it WATCH is +1.07% over 76 deals — noise next to GO's +12%.
+  happened to open +28%. Without it WATCH is +0.98% over 77 deals — noise next to GO's +12%.
   `run.py` raises a banner only for a newly-GO deal. Don't "fix" this by restoring a summary
   notification.
 - **배정 is 비례 only** — `floor(청약한도 / 비례경쟁률)`. 균등 is excluded because 청약건수 is
@@ -259,7 +259,12 @@ Two consequences, both already encoded:
   and changes no conclusion.
 
 `net_returns.py` caches detail pages under `state/cache/` — it needs one fetch per deal, so
-the first full run makes ~240 requests. Never drop the cache or the 1s delay.
+the first full run makes ~240 requests. Never drop the cache or the 1s delay. A cached
+page counts only if it was saved **after** the deal's 상장일, so a page fetched mid-deal is
+re-fetched once. Before that rule, three pages cached on their 청약 day kept an empty
+청약경쟁률 for three months and were reported as "38 never published it" (니어스랩, 해치텍,
+기도산업 — 38 had the figures all along). A listed deal always had a 청약, so an empty
+청약경쟁률 there is a data gap, and the skip line says so.
 
 ## The forecast model — and why it stays this simple
 
@@ -275,15 +280,15 @@ outcome to learn from. Getting this wrong invalidates everything downstream.
 
 What the harness established, and what you should not undo:
 
-- **Hard-bin comparables were the worst model tested** (MAE 63.3만 vs ~45 for
-  everything else, rank corr 0.266 vs 0.371 shipped; n=174 scored, 2026-11-12).
+- **Hard-bin comparables were the worst model tested** (MAE 64.3만 vs ~45 for
+  everything else, rank corr 0.285 vs 0.385 shipped; n=176 scored, 2026-11-12).
   Smooth kernel weighting beat it because it uses every past deal instead of a
   handful in-or-out. The figures were 62.2/~41 and 0.307/0.460 at an earlier
   build; that drop is not recent deals being mis-ranked — targets listed before
   2026-10-01 score 0.372 and the 14 since score 0.367.
 - **No third feature beat the shipped model on either metric.** 3개월+ tenor share,
   band position, and recency decay all scored worse on both MAE and rank correlation
-  (2026-11-12: shipped 44.6만 / 0.371; the best of them, tenor3, 48.8만 / 0.328).
+  (2026-11-12: shipped 44.4만 / 0.385; tenor3 49.3만 / 0.300, band position 45.9만 / 0.276).
   Against their own h=1.0 base the picture has flipped between rebuilds — tenor3
   raised rho at one build and only matched it at the next — which is exactly the
   noise the "materially beats" bar exists to filter. Two features is not laziness; it is the

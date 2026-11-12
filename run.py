@@ -334,7 +334,7 @@ def main():
         )
 
     # Only a new GO is worth interrupting for. net_returns.py measured WATCH at
-    # +1.07% excess return over 76 deals excluding one lucky outlier, against
+    # +0.98% excess return over 77 deals excluding one lucky outlier, against
     # GO's +12% (2026-11-12) -- indistinguishable from leaving the
     # cash alone, and that is before the friction of actually moving funds. So
     # WATCH stays visible in the report and never raises a banner.
