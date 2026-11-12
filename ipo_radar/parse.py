@@ -94,6 +94,67 @@ def _ratio(s: Optional[str]) -> Optional[float]:
     return float(m.group(1).replace(",", ""))
 
 
+_SUB_RATIO_RE = re.compile(
+    r"청약경쟁률\s*([\d,.]+)\s*:\s*1(?:\s*\(\s*비례\s*([\d,.]+)\s*:\s*1\s*\))?")
+
+
+def subscription_ratios(text: str) -> Dict[str, Optional[float]]:
+    """'청약경쟁률 666.78:1 (비례 1334:1)' -> {"total": 666.78, "prop": 1334.0}.
+
+    Spacing around the colon varies ('106.30 : 1' on 동방메디컬, 와이즈넛,
+    산일전기), and REITs often publish the 통합 figure with no 비례 at all.
+    Either half may come back None.
+    """
+    m = _SUB_RATIO_RE.search(text or "")
+    if not m:
+        return {"total": None, "prop": None}
+    num = lambda g: float(g.replace(",", "")) if g and g.strip(",.") else None
+    return {"total": num(m.group(1)), "prop": num(m.group(2))}
+
+
+# 청약한도 as a share of the brokerage's own 일반 allotment (its 주식수 high
+# end), measured over the 2023-06.. sample. Used ONLY when 38 publishes no limit
+# at all -- 세나테크놀로지, or a live deal before its limits are filled in -- and
+# every figure built on it is labelled 추정. The median is 4.0% either way:
+#   single underwriter                  p10 3.2%  p90 6.2%  (n=191)
+#   multi, largest-allotment row        p10 1.9%  p90 6.0%  (n=39)
+# The estimate is taken at the largest allotment, since junior 인수회사 rows
+# spread far wider (down to token limits).
+LIMIT_SHARE = 0.040
+LIMIT_SHARE_RANGE = {"single": (0.032, 0.062), "multi": (0.019, 0.060)}
+
+
+def estimate_limit(underwriters: List[Dict]) -> Optional[Dict]:
+    """A labelled stand-in 청약한도 when 38 publishes none, else None."""
+    rows = [(u.get("name"), (u.get("shares") or {}).get("high")) for u in underwriters or []]
+    rows = [(n, sh) for n, sh in rows if sh]
+    if not rows:
+        return None
+    name, sh = max(rows, key=lambda r: r[1])
+    basis = "single" if len(rows) == 1 else "multi"
+    notes = ["우대 미적용"]
+    if len(rows) > 1 and len({s for _, s in rows}) == 1:
+        # Summary line only (세나: KB, 신한 both "140,000"): every brokerage got
+        # the deal's combined 주식수, so this assumes the lead holds all of it.
+        notes.append("주간사 합산 물량 기준 — 과대추정 가능")
+    lo, hi = LIMIT_SHARE_RANGE[basis]
+    return {"broker": name, "shares": int(round(sh * LIMIT_SHARE)),
+            "low": int(round(sh * lo)), "high": int(round(sh * hi)),
+            "basis_shares": sh, "note": ", ".join(notes)}
+
+
+def _unreadable(label: str, raw: Optional[str], parsed, warnings: List[str]) -> None:
+    """Record a cell that carries digits but did not parse.
+
+    The parsers return None both for "not published yet" and for "published in
+    a form we can't read", and downstream treats None as the former -- a
+    PENDING deal, a skipped backtest row. Digits in the raw cell are what tell
+    the two apart, so that is the test.
+    """
+    if parsed is None and raw and re.search(r"\d", raw):
+        warnings.append("%s '%s' 해석 실패" % (label, raw[:40]))
+
+
 def _date(s: Optional[str]) -> Optional[str]:
     if not s:
         return None
@@ -190,8 +251,13 @@ def parse_new_listings(page: str) -> List[Dict]:
     return out
 
 
-def parse_demand_results(page: str) -> List[Dict]:
-    """수요예측결과 (?o=r1) -> institutional demand-forecast results."""
+def parse_demand_results(page: str, warnings: Optional[List[str]] = None) -> List[Dict]:
+    """수요예측결과 (?o=r1) -> institutional demand-forecast results.
+
+    A row whose 기관경쟁률 is blank or '-' has no result yet and is dropped. One
+    that carries digits we cannot read is dropped too, but named in
+    ``warnings`` -- that is how 엠비디's bare '187.10' went unseen.
+    """
     out = []
     for row in _ROW_RE.findall(page):
         tds = _TD_RE.findall(row)
@@ -200,6 +266,10 @@ def parse_demand_results(page: str) -> List[Dict]:
         c = [_norm(t) for t in tds]
         ratio = _ratio(c[5])
         if ratio is None:
+            if warnings is not None and re.match(r"\d{4}\.\d\d\.\d\d", c[1]):
+                tmp = []  # type: List[str]
+                _unreadable("기관경쟁률", c[5], None, tmp)
+                warnings.extend("%s: %s" % (c[0], w) for w in tmp)
             continue
         no_m = _NO_RE.search(row)
         out.append(
@@ -233,13 +303,40 @@ def _num_range(s: Optional[str]) -> Dict[str, Optional[int]]:
     return {"low": vals[0], "high": vals[1] if len(vals) > 1 else vals[0]}
 
 
-def _parse_underwriters(f: "_Fields") -> List[Dict]:
+def _is_broker(cell: str) -> bool:
+    """A brokerage name, as opposed to a share count or a role (대표주관/인수).
+
+    Not just '증권': DB금융투자 has none, and its rows were dropped outright.
+    """
+    return (not cell.endswith("주")
+            and any(k in cell for k in ("증권", "투자", "금융"))
+            and not re.match(r"[\d,~\s-]+$", cell))
+
+
+def _same_broker(a: str, b: str) -> bool:
+    """38 sometimes truncates a name ('신한투자' vs '신한투자증권')."""
+    strip = lambda n: n[:-2] if n.endswith("증권") else n
+    a, b = strip(a.strip()), strip(b.strip())
+    return bool(a) and bool(b) and (a.startswith(b) or b.startswith(a))
+
+
+def _parse_underwriters(f: "_Fields", warnings: Optional[List[str]] = None) -> List[Dict]:
     """Per-brokerage subscription terms.
 
-    Multi-underwriter deals render an ``인수회사 | 주식수 | 청약한도 | 기타``
-    table, where 기타 carries the role (대표주관/공동주관/인수) and each row has
-    its own 청약한도 -- the summary line above it shows ``청약한도: -``. Single
-    -underwriter deals omit that table, so fall back to the summary line.
+    The block has a summary line (``주식수: N 주 / 청약한도: A~B 주``) and, on
+    multi-underwriter deals, an ``인수회사 | 주식수 | 청약한도 | 기타`` table.
+    Which of the two carries the limits varies, so both are read and merged:
+
+    - Table rows with their own 청약한도, summary ``청약한도: -``: the usual
+      multi-underwriter shape. The table is the whole answer.
+    - No table: single-underwriter deals. The summary line is the whole answer.
+    - Table rows reading ``- 주``, the range on the summary (에이치엘지노믹스).
+    - Table listing only the junior 인수회사, the lead on the summary line alone
+      (신영증권 27,000~36,000 with 유진 7,000 in the table; 두산로보틱스).
+
+    So: take the table rows, then give the summary range to every summary-line
+    brokerage the table left without a limit. Breaking any of these is silent --
+    a short or limit-less broker list, never an exception.
     """
     start = f.index_of("주간사")
     if start < 0:
@@ -249,43 +346,59 @@ def _parse_underwriters(f: "_Fields") -> List[Dict]:
         len(f.cells),
     )
     block = f.cells[start:end]
+    none = {"low": None, "high": None}
 
-    header = next((i for i, c in enumerate(block) if c == "인수회사"), -1)
     out = []
+    header = next((i for i, c in enumerate(block) if c == "인수회사"), -1)
     if header >= 0:
-        # 4-column rows following the 인수회사/주식수/청약한도/기타 header.
-        for i in range(header + 4, len(block) - 3, 4):
-            name = block[i]
-            if not name or "증권" not in name:
-                continue
-            out.append(
-                {
-                    "name": name,
-                    "shares": _num_range(block[i + 1]),
-                    "limit_low": _num_range(block[i + 2])["low"],
-                    "limit_high": _num_range(block[i + 2])["high"],
-                    "role": block[i + 3] or None,
-                }
-            )
-        if out:
-            return out
+        # Split rows at each brokerage name, not every 4 cells: an empty 기타
+        # is dropped, leaving 3-cell rows, and a fixed stride then reads the next
+        # brokerage's name as this one's role -- 13 cached deals lost every
+        # underwriter after the first that way.
+        body = block[header + 4:]
+        starts = [i for i, c in enumerate(body) if _is_broker(c)]
+        for k, i in enumerate(starts):
+            row = body[i:starts[k + 1] if k + 1 < len(starts) else len(body)]
+            row += [""] * (4 - len(row))
+            limit = _num_range(row[2])
+            out.append({
+                "name": row[0],
+                "shares": _num_range(row[1]),
+                "limit_low": limit["low"],
+                "limit_high": limit["high"],
+                "role": row[3] or None,
+            })
 
-    # Fallback: "주식수: 227,500 주 / 청약한도: 11,000~13,000 주"
-    if len(block) >= 3:
-        summary = block[2]
-        shares_m = re.search(r"주식수\s*:\s*([\d,~\s]*\d)", summary)
-        limit_m = re.search(r"청약한도\s*:\s*([\d,~\s]*\d)", summary)
-        for name in [n.strip() for n in block[1].split(",") if n.strip()]:
-            limit = _num_range(limit_m.group(1)) if limit_m else {"low": None, "high": None}
-            out.append(
-                {
-                    "name": name,
-                    "shares": _num_range(shares_m.group(1)) if shares_m else {"low": None, "high": None},
-                    "limit_low": limit["low"],
-                    "limit_high": limit["high"],
-                    "role": None,
-                }
-            )
+    if len(block) < 3:
+        return out
+    summary = block[2]
+    shares_m = re.search(r"주식수\s*:\s*([\d,~\s]*\d)", summary)
+    limit_m = re.search(r"청약한도\s*:\s*([\d,~\s]*\d)", summary)
+    limit = _num_range(limit_m.group(1)) if limit_m else none
+    # Comma-separated, except when 38 types dots (HD현대마린솔루션:
+    # "KB증권,신한.하나.대신.삼성증권").
+    named = [n.strip() for n in re.split(r"[,.·]", block[1]) if n.strip()]
+    if out and limit["high"] is None:
+        # The usual multi-underwriter shape. Every brokerage the summary line
+        # names should have a table row; one that doesn't means rows were lost.
+        if warnings is not None:
+            have = [u["name"] for u in out]
+            for name in named:
+                if not any(_same_broker(name, h) for h in have):
+                    warnings.append("주간사 %s 가 인수회사 표에 없음 — 행 파싱 확인" % name)
+        return out
+    for name in named:
+        u = next((x for x in out if _same_broker(name, x["name"])), None)
+        if u is None:
+            out.append({
+                "name": name,
+                "shares": _num_range(shares_m.group(1)) if shares_m else none,
+                "limit_low": limit["low"],
+                "limit_high": limit["high"],
+                "role": None,
+            })
+        elif u["limit_high"] is None:
+            u["limit_low"], u["limit_high"] = limit["low"], limit["high"]
     return out
 
 
@@ -302,7 +415,14 @@ def parse_detail(page: str, no: str) -> Dict:
         lockup[key] = _int(f.get(label))
     lockup["total"] = _int(f.get("합계"))
 
-    underwriters = _parse_underwriters(f)
+    warnings = []  # type: List[str]
+    underwriters = _parse_underwriters(f, warnings)
+    final_price = _int(f.get("확정공모가"))
+    inst = _ratio(f.get("기관경쟁률"))
+    lockup_pct = _float(f.get("의무보유확약"))
+    _unreadable("확정공모가", f.get("확정공모가"), final_price, warnings)
+    _unreadable("기관경쟁률", f.get("기관경쟁률"), inst, warnings)
+    _unreadable("의무보유확약", f.get("의무보유확약"), lockup_pct, warnings)
 
     return {
         "no": no,
@@ -313,7 +433,7 @@ def parse_detail(page: str, no: str) -> Dict:
         "status": f.get("진행상황"),
         "band_low": band["low"],
         "band_high": band["high"],
-        "final_price": _int(f.get("확정공모가")),
+        "final_price": final_price,
         "total_shares": _int(f.get("총공모주식수")),
         "offer_amount_mn": _int(f.get("공모금액")),
         "demand_start": demand["start"],
@@ -322,11 +442,12 @@ def parse_detail(page: str, no: str) -> Dict:
         "subscription_end": subs["end"],
         "refund_date": _date(f.get("환불일")),
         "listing_date": _date(f.get("상장일")) or _date(f.get("신규상장일")),
-        "institutional_ratio": _ratio(f.get("기관경쟁률")),
-        "lockup_pct": _float(f.get("의무보유확약")),
+        "institutional_ratio": inst,
+        "lockup_pct": lockup_pct,
         "lockup_breakdown": lockup,
         "underwriters": underwriters,
         "retail_allocation": f.get("일반청약자"),
+        "parse_warnings": warnings,
     }
 
 

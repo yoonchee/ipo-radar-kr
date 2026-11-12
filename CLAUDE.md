@@ -35,6 +35,7 @@ python3 run.py --force             # re-notify deals already alerted
 python3 backtest.py                # re-calibrate thresholds against realised outcomes
 python3 net_returns.py --rate 3.0  # 실질손익 + rebuilds state/cache/dataset.json
 python3 evaluate.py                # walk-forward check on the forecast model
+python3 -m unittest discover tests # parser regression tests (stdlib, no fetches)
 cat state/latest.md                # most recent report
 ```
 
@@ -43,10 +44,38 @@ cat state/latest.md                # most recent report
 output. `state/` is gitignored, so on a fresh checkout the file is absent and the
 daily report silently omits its 기대손익 section until you rebuild it.
 
-There is **no test suite**. Verification is by running against the live site and eyeballing
-the parse — `--all --no-notify` is the safe way to do that. When changing `parse.py`, check
-the output against both a single-underwriter and a multi-underwriter deal (see below), since
-they take different code paths.
+`tests/test_parse.py` holds one case per parser shape that has ever failed on the live
+site. The inputs are synthetic cell sequences in 38's layout, never copies of its pages:
+the repo is public. A new shape found in the wild gets a test before the fix. The tests
+don't replace running against the live site — `--all --no-notify` is the safe way to do
+that — and when changing `parse.py`, diff old against new `parse_detail()` over every
+page in `state/cache/detail/` (see below).
+
+### Failures must be loud
+
+Every parser returns None both for "not published yet" and for "published in a form we
+can't read", and downstream reads None as the first: a PENDING verdict, a skipped
+backtest row. That is how one day turned up six silent failures at once:
+- a bare `187.10` with no `:1` (엠비디 sat at PENDING on its 청약일)
+- `106.30 : 1` with spaces around the colon
+- 3-cell underwriter rows
+- tables listing only the junior 인수회사
+- DB금융투자 rows dropped for lacking "증권"
+- dot-separated summary lines
+
+None raised an error. The guard:
+
+- **Digits in a cell that didn't parse are a parse warning** (`parse._unreadable`), in
+  `parse_detail()`'s `parse_warnings` and `parse_demand_results(page, warnings)`.
+- **Invariants:** a 확정공모가 with no 기관경쟁률 after the backfill (they publish
+  together), and a summary-line brokerage missing from the parsed list.
+- **Warnings are surfaced:** at the top of the report, in the GO email, on stderr, and as
+  one banner per new message (`state/warned.json`).
+- **`net_returns.py` names every skip and its exact cause.** It used to print 6 of 12
+  under one "incomplete data" label.
+
+Over all 302 pages on disk the warnings fire zero times. Keep it that way: a warning that
+fires on legitimate data teaches you to ignore it.
 
 ## Architecture
 
@@ -63,18 +92,72 @@ The screen is a three-source join, which is why no single page gives you the ans
 EXCLUDED. A deal with no 수요예측 result yet is PENDING, not PASS — it will be re-evaluated on
 a later run once the numbers publish.
 
-### The underwriter block has two shapes
+### The underwriter block has several shapes
 
 This is the one piece of parsing that is genuinely non-obvious, and it was found empirically:
 
-- **Multi-underwriter deals** render an `인수회사 | 주식수 | 청약한도 | 기타` table, one row per
-  brokerage with its own 청약한도 and role (대표주관/공동주관/인수). The summary line above it
-  shows `청약한도: -`, so reading the summary alone loses the per-brokerage limits.
+- **Multi-underwriter deals** usually render an `인수회사 | 주식수 | 청약한도 | 기타` table, one
+  row per brokerage with its own 청약한도 and role (대표주관/공동주관/인수). The summary line
+  above it shows `청약한도: -`, so reading the summary alone loses the per-brokerage limits.
 - **Single-underwriter deals omit that table entirely** and only have the summary line
   (`주식수: N 주 / 청약한도: A~B 주`).
+- **Sometimes the table rows read `- 주`** and the one range sits on the summary line
+  (에이치엘지노믹스), or **the table lists only the junior 인수회사** and the lead appears on
+  the summary line alone (1912: 유진 7,000 in the table, 신영 27,000~36,000 above it;
+  두산로보틱스).
+- **Rows are not always 4 cells.** An empty 기타 is dropped, so rows are split at each
+  brokerage name. A fixed 4-cell stride read the next brokerage's name as the role and
+  silently lost every underwriter after the first on 13 cached deals — on three of them
+  the dropped one had the higher limit (NH 30,000 vs 한투 17,000).
+- **Not every brokerage name contains 증권** (DB금융투자), and the summary line is
+  sometimes dot-separated with abbreviated names (`KB증권,신한.하나.대신.삼성증권`), so
+  names are matched with `_same_broker()`, not by equality.
 
-`_parse_underwriters()` handles both. Breaking either path is silent — you get an empty or
-wrong broker list, not an exception.
+`_parse_underwriters()` therefore reads both and merges: table rows first, then the
+summary range for any summary-line brokerage the table left without a limit. Breaking
+any path is silent — you get an empty or wrong broker list, not an exception. When
+changing it, diff old vs new `parse_detail()` over every page in `state/cache/detail/`:
+only the pages you meant to change should move.
+
+### A missing 청약한도 is estimated, never a reason to drop a deal
+
+When 38 publishes no limit at all, the parser can't produce one:
+- **세나테크놀로지** shows `청약한도: -` and has no table.
+- **A live deal** can still have `- 주` in every row when it goes GO, as 에스에프씨 did.
+
+So `parse.estimate_limit()` takes 4% of the largest brokerage's own 일반 allotment. Over
+the sample, 청약한도 as a share of that allotment has a median of 4.0% either way. The
+p10–p90 spread is 3.2–6.2% across 191 single-underwriter deals, and 1.9–6.0% across the
+lead rows of 39 multi-underwriter deals. The range shown matches the deal's shape.
+
+Two limits of the estimate are printed with it, never left implicit:
+- **It ignores your 우대 tier (`우대 미적용`).** The tier multiplies the 일반 base, which is
+  exactly what's unknown, so the figure is 38-standard while every other live number is
+  your own.
+- **A summary-line-only multi-underwriter deal is flagged `과대추정 가능`.** There every
+  brokerage carries the deal's combined 주식수, so the estimate assumes the lead holds
+  all of it.
+
+The estimate is labelled everywhere it lands:
+- **live:** `my_limit["estimated"]` and `my_limit["note"]`, `⚠추정한도` in the report, and
+  a line in both the GO email and the calendar event, with the range
+- **backtest:** `limit_source` in `net_returns.py`
+- **forecast data:** `estimated` in `dataset.json`
+
+An estimated deal stays in the forecast as an analogue, since that only needs `mult` and
+`ret`. `evaluate.py` doesn't score it as a target, because its realised net rests on a
+guessed limit.
+
+A missing or impossible 비례경쟁률 is filled from 2 × 통합:
+- **Why it holds:** across all 246 deals that publish both, 비례 / 통합 sat at 1.97–2.02
+  (p2–p98), since 균등 takes half the pool.
+- **When it's used:** REITs that publish 통합 only, or 져스텍's truncated `비례 4:1`.
+- **REITs still stay skipped:** no REIT in the sample publishes both figures, so the rule
+  is unverified for them.
+
+This is a deliberate exception to "don't invent a 청약건수" below, and it doesn't license
+that. Both estimates above were measured, and each has a known spread. 청약건수 isn't
+published anywhere, so there's nothing to measure it against.
 
 ### Scoring rationale
 
@@ -156,17 +239,17 @@ Two things to keep in mind before re-fitting anything:
 ## 시초/공모 percentages are not money — use net_returns.py
 
 `backtest.py` measures the price move. `net_returns.py` measures the trade, and the two
-disagree about the headline. Subscribing at max 청약한도 to *every* deal loses 3,007만 won
-over the sample (n=244, rebuilt 2026-11-12) despite 84% of deals rising at the open,
-because 증거금 (50% of 청약한도 × 확정공모가) sits idle from 청약일 to 환불일, and because weak deals — the ones nobody wants —
-fill you with hundreds of shares right before they fall. GO earns +11.93% excess return;
-PASS earns −32.65%.
+disagree about the headline. Subscribing at max 청약한도 to *every* deal loses 2,872만 won
+over the sample (n=252, rebuilt 2026-11-12) despite 84% of deals rising at the open,
+because 증거금 (50% of 청약한도 × 확정공모가) sits idle from 청약일 to 환불일, and because
+weak deals — the ones nobody wants — fill you with hundreds of shares right before they
+fall. GO earns +12.17% excess return; PASS earns −30.50%.
 
 Two consequences, both already encoded:
 
-- **WATCH does not notify.** It measured +1.67% over 75 deals, but one lucky deal carries
-  that: 이에스티 (630:1, 확약 0.24%) drew 380주 when the forecast expected 16 and happened to
-  open +28%. Without it WATCH is +0.78% over 74 deals, which is zero.
+- **WATCH does not notify.** It measured +1.85% over 77 deals, but one lucky deal carries
+  much of that: 이에스티 (630:1, 확약 0.24%) drew 380주 when the forecast expected 16 and
+  happened to open +28%. Without it WATCH is +1.07% over 76 deals — noise next to GO's +12%.
   `run.py` raises a banner only for a newly-GO deal. Don't "fix" this by restoring a summary
   notification.
 - **배정 is 비례 only** — `floor(청약한도 / 비례경쟁률)`. 균등 is excluded because 청약건수 is
@@ -192,18 +275,18 @@ outcome to learn from. Getting this wrong invalidates everything downstream.
 
 What the harness established, and what you should not undo:
 
-- **Hard-bin comparables were the worst model tested** (MAE 65.7만 vs ~45 for
-  everything else, rank corr 0.252 vs 0.369 shipped; n=167 scored, 2026-11-12).
+- **Hard-bin comparables were the worst model tested** (MAE 63.3만 vs ~45 for
+  everything else, rank corr 0.266 vs 0.371 shipped; n=174 scored, 2026-11-12).
   Smooth kernel weighting beat it because it uses every past deal instead of a
   handful in-or-out. The figures were 62.2/~41 and 0.307/0.460 at an earlier
   build; that drop is not recent deals being mis-ranked — targets listed before
   2026-10-01 score 0.372 and the 14 since score 0.367.
-- **No third feature beat the shipped model on rank correlation.** 3개월+ tenor share,
-  band position, and recency decay all scored lower rho, and none moved MAE by more
-  than 0.4만 (band position: 45.1 vs 45.5). Against their own h=1.0 base the picture
-  is mixed — tenor3 raises rho while worsening MAE, band position holds MAE but
-  drops rho — which is exactly the noise the "materially beats" bar exists to
-  filter. Two features is not laziness; it is the
+- **No third feature beat the shipped model on either metric.** 3개월+ tenor share,
+  band position, and recency decay all scored worse on both MAE and rank correlation
+  (2026-11-12: shipped 44.6만 / 0.371; the best of them, tenor3, 48.8만 / 0.328).
+  Against their own h=1.0 base the picture has flipped between rebuilds — tenor3
+  raised rho at one build and only matched it at the next — which is exactly the
+  noise the "materially beats" bar exists to filter. Two features is not laziness; it is the
   measured optimum at this sample size. Adding a third needs a walk-forward win, not a
   plausible story.
 - **Bandwidth 0.6 is deliberately not the argmax.** MAE was flat across the whole

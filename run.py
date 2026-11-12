@@ -36,6 +36,8 @@ SEEN_PATH = os.path.join(STATE_DIR, "seen.json")
 # EVENT was created, and the two advance independently -- a deal is alerted
 # once but may gain its 매도 event days later when 상장일 publishes.
 CALENDAR_PATH = os.path.join(STATE_DIR, "calendar.json")
+# Parse warnings already bannered, per deal, so a persistent one alerts once.
+WARNED_PATH = os.path.join(STATE_DIR, "warned.json")
 CONFIG_PATH = os.path.join(ROOT, "config.json")
 # Machine-local overrides, gitignored. Anything personal to one machine or one
 # person -- the alert address, say -- belongs here rather than in the tracked
@@ -67,6 +69,20 @@ def save_seen(seen):
     os.makedirs(STATE_DIR, exist_ok=True)
     with open(SEEN_PATH, "w") as fh:
         json.dump(seen, fh, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def _load_json(path):
+    try:
+        with open(path, "r") as fh:
+            return json.load(fh)
+    except (IOError, OSError, ValueError):
+        return {}
+
+
+def _save_json(path, data):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    with open(path, "w") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2, sort_keys=True)
 
 
 def load_calendar_state():
@@ -122,7 +138,10 @@ def my_limit(rec, cfg):
     the top of 38's range, which is what every forecast used before this.
 
     Returns {"broker", "shares", "multiplier"}; multiplier is None when the
-    figure is 38's standard limit rather than a personal one.
+    figure is 38's standard limit rather than a personal one. When 38 publishes
+    no 청약한도 at all, it is estimated from the brokerage's allotment
+    (`parse.estimate_limit`) and marked {"estimated": True, "low", "high"}:
+    a GO must not lose its numbers just because the limit is not out yet.
     """
     # Compare without a trailing 증권: 38 occasionally truncates a name (one
     # 신한 deal reads "신한투자" against 21 reading "신한투자증권"), and an exact
@@ -157,6 +176,12 @@ def my_limit(rec, cfg):
         cand["needs_account"] = norm(name) in no_acct
         if best is None or cand["shares"] > best["shares"]:
             best = cand
+    if best is None:
+        est = parse.estimate_limit(rec.get("underwriters"))
+        if est:
+            best = {"broker": est["broker"], "shares": est["shares"], "multiplier": None,
+                    "estimated": True, "low": est["low"], "high": est["high"], "note": est["note"],
+                    "needs_account": norm(est["broker"]) in no_acct}
     return best
 
 
@@ -202,6 +227,7 @@ def attach_forecasts(results, cfg=None):
         p = forecast.predict(target, hist, bootstrap=800)
         if p:
             p["capital"] = capital
+            p["limit_estimated"] = bool(mine.get("estimated"))
             r["forecast"] = p
 
 
@@ -246,7 +272,9 @@ def main():
     candidates = select_candidates(schedule, cfg, today, take_all=args.all)
 
     # 수요예측 results land on a separate page; index by 38.co.kr's `no`.
-    demand = {d["no"]: d for d in parse.parse_demand_results(fetch.fetch_demand_results_page()) if d["no"]}
+    demand_warn = []
+    demand = {d["no"]: d for d in parse.parse_demand_results(fetch.fetch_demand_results_page(), demand_warn)
+              if d["no"]}
 
     results = []
     for row in candidates:
@@ -267,12 +295,24 @@ def main():
         if not rec.get("subscription_start"):
             rec["subscription_start"] = row["subscription_start"]
             rec["subscription_end"] = row["subscription_end"]
+        # 확정공모가 and 기관경쟁률 publish together, from the same 수요예측. A
+        # price with no ratio after the backfill means a ratio we failed to
+        # read -- 엠비디 sat at PENDING on its 청약일 exactly so.
+        if rec.get("final_price") and rec.get("institutional_ratio") is None:
+            rec.setdefault("parse_warnings", []).append(
+                "확정공모가는 공시됐는데 기관경쟁률이 없음 — 파싱 확인 (PENDING 이 아닐 수 있음)")
         results.append({"rec": rec, "verdict": score.evaluate(rec, cfg)})
 
     attach_forecasts(results, cfg)
 
+    # Parse anomalies, which used to fail silently into PENDING or a skip.
+    warnings = [(r["rec"], w) for r in results for w in (r["rec"].get("parse_warnings") or [])]
+    warnings += [({"name": "수요예측결과", "no": None}, w) for w in demand_warn]
+    for rec, w in warnings:
+        sys.stderr.write("parse warning: %s (no=%s): %s\n" % (rec.get("name"), rec.get("no"), w))
+
     os.makedirs(REPORT_DIR, exist_ok=True)
-    md = report.render(results, run_date)
+    md = report.render(results, run_date, parse_warnings=[(rec.get("name"), w) for rec, w in warnings])
     report_path = os.path.join(REPORT_DIR, "%s.md" % run_date)
     with open(report_path, "w") as fh:
         fh.write(md)
@@ -294,7 +334,8 @@ def main():
         )
 
     # Only a new GO is worth interrupting for. net_returns.py measured WATCH at
-    # +0.03% excess return over 69 deals -- indistinguishable from leaving the
+    # +1.07% excess return over 76 deals excluding one lucky outlier, against
+    # GO's +12% (2026-11-12) -- indistinguishable from leaving the
     # cash alone, and that is before the friction of actually moving funds. So
     # WATCH stays visible in the report and never raises a banner.
     #
@@ -315,6 +356,23 @@ def main():
             else:
                 failed.append(r)
     save_seen(seen)
+
+    # One banner per new warning. A wrong parse is as costly as a missed GO --
+    # it can BE a missed GO -- so it interrupts, but only once per message.
+    if warnings and not args.no_notify:
+        warned = _load_json(WARNED_PATH)
+        new = [(rec, w) for rec, w in warnings if w not in warned.get(rec.get("no") or rec["name"], [])]
+        if new:
+            first = new[0]
+            ok = notify.notify(
+                "공모주 레이더 — 파싱 경고 %d건" % len(new),
+                "%s" % first[0].get("name"),
+                first[1] + (" 외 %d건" % (len(new) - 1) if len(new) > 1 else ""),
+                sound="Basso", open_target=report_path, group="ipo-radar-parse")
+            if ok:
+                for rec, w in new:
+                    warned.setdefault(rec.get("no") or rec["name"], []).append(w)
+                _save_json(WARNED_PATH, warned)
 
     # Calendar events for every GO, not just the newly-alerted ones: a deal is
     # alerted once, but its 매도 event cannot be created until 상장일 publishes,

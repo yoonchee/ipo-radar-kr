@@ -52,7 +52,12 @@ def _brokers(rec: Dict) -> str:
     return "<br>".join(parts)
 
 
-def render(results: List[Dict], run_date: str) -> str:
+def _fc_name(r: Dict) -> str:
+    n = r["rec"].get("name") or "?"
+    return n + " ⚠추정한도" if (r.get("forecast") or {}).get("limit_estimated") else n
+
+
+def render(results: List[Dict], run_date: str, parse_warnings: Optional[List] = None) -> str:
     results = sorted(
         results,
         key=lambda r: (_ORDER.get(r["verdict"]["verdict"], 9), r["rec"].get("subscription_start") or ""),
@@ -67,6 +72,18 @@ def render(results: List[Dict], run_date: str) -> str:
     L.append("")
     L.append("> 판단 근거는 공개된 수요예측 결과이며, 투자 판단과 책임은 본인에게 있습니다.")
     L.append("")
+
+    if parse_warnings:
+        # First, above the verdicts: a value we could not read can turn a GO
+        # into PENDING, so none of the verdicts below is safe until it is checked.
+        L.append("## ⚠ 파싱 경고 %d건" % len(parse_warnings))
+        L.append("")
+        L.append("38 페이지에 값이 있는데 읽지 못했거나 형식이 예상과 다릅니다. "
+                 "아래 판정이 틀렸을 수 있으니 원문을 확인하세요.")
+        L.append("")
+        for name, w in parse_warnings:
+            L.append("- **%s** — %s" % (name or "?", w))
+        L.append("")
 
     if go or watch:
         L.append("## 청약 대상")
@@ -113,10 +130,10 @@ def render(results: List[Dict], run_date: str) -> str:
                 if not f.get("calibrated"):
                     # Out of the validated range: the spread only, no point estimate.
                     L.append("| %s | %s | %d주 | ⚠ 생략 | %s | - | - |"
-                             % (r["rec"].get("name"), _man(f["capital"]), f["shares_med"], spread))
+                             % (_fc_name(r), _man(f["capital"]), f["shares_med"], spread))
                     continue
                 L.append("| %s | %s | %d주 | %s | %s | %s ~ %s | %.0f%% |"
-                         % (r["rec"].get("name"), _man(f["capital"]), f["shares_med"],
+                         % (_fc_name(r), _man(f["capital"]), f["shares_med"],
                             _won_signed(f["ev"]), spread, _won_signed(f["ev_lo"]),
                             _won_signed(f["ev_hi"]), f["win_prob"]))
             L.append("")
@@ -132,6 +149,17 @@ def render(results: List[Dict], run_date: str) -> str:
                          "크게 늘 수 있습니다. walk-forward에서 결과 범위가 52%만 맞췄고 흑자확률 75% 대비 실제 "
                          "43%였으므로, 기대손익과 흑자확률은 생략합니다.")
                 L.append("")
+
+        est = [r for r in go + watch if (r.get("forecast") or {}).get("limit_estimated")]
+        if est:
+            L.append("> ⚠ 청약한도 추정: %s — 38에 청약한도가 아직 없어 증권사 배정물량의 4%%로 추정했습니다 "
+                     "(괄호는 과거 10~90%% 범위). 투입증거금과 기대손익은 실제 한도에 비례해 달라지니 증권사 공고를 확인하세요."
+                     % ", ".join("%s %s주 (%s~%s; %s)" % (
+                         r["rec"].get("name"), "{:,}".format(r["rec"]["my_limit"]["shares"]),
+                         "{:,}".format(r["rec"]["my_limit"]["low"]), "{:,}".format(r["rec"]["my_limit"]["high"]),
+                         r["rec"]["my_limit"].get("note") or "")
+                         for r in est))
+            L.append("")
 
         L.append("### 판정 근거")
         L.append("")

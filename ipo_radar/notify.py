@@ -222,6 +222,11 @@ def _go_email_body(rec, verdict, fc, url):
     ml = rec.get("my_limit") or {}
     if ml.get("needs_account"):
         L.append("⚠ %s 계좌 없음 — 청약 전에 계좌 개설 필요" % ml["broker"])
+    if ml.get("estimated"):
+        L.append("⚠ 청약한도 미공개 — %s 배정물량 기준 추정 %s주 (과거 범위 %s~%s주; %s). "
+                 "아래 금액은 추정 한도 기준이니 증권사 공고 확인" % (
+                     ml["broker"], "{:,}".format(ml["shares"]),
+                     "{:,}".format(ml["low"]), "{:,}".format(ml["high"]), ml.get("note") or ""))
     if ml.get("multiplier"):
         L.append("내 청약한도  %s %s주 (우대 %d%%)" % (
             ml["broker"], "{:,}".format(ml["shares"]), round(ml["multiplier"] * 100)))
@@ -243,6 +248,11 @@ def _go_email_body(rec, verdict, fc, url):
                     "   [0을 포함 — 평균을 양(+)으로 단정할 수 없음]"
                     if fc["ev_lo"] < 0 else ""))
             L.append("  흑자확률  %.0f%%" % fc.get("win_prob", 0))
+    if rec.get("parse_warnings"):
+        L.append("")
+        L.append("⚠ 파싱 경고 — 판정이 틀렸을 수 있으니 원문 확인")
+        for w in rec["parse_warnings"]:
+            L.append("  - %s" % w)
     if verdict and verdict.get("reasons"):
         L.append("")
         L.append("판정 근거")

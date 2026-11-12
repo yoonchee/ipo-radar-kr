@@ -62,14 +62,30 @@ def extract(no):
     txt = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", raw)))
     rec = parse.parse_detail(raw, no)
 
-    m = re.search(r"청약경쟁률\s*([\d,.]+):1\s*\(비례\s*([\d,.]+):1\)", txt)
-    total_ratio = float(m.group(1).replace(",", "")) if m else None
-    prop_ratio = float(m.group(2).replace(",", "")) if m else None
+    sr = parse.subscription_ratios(txt)
+    total_ratio, prop_ratio = sr["total"], sr["prop"]
+    # 비례 is 2 x 통합 whenever both are published: the ratio sat at 1.97..2.02
+    # (p2..p98) over all 246 deals that have both, because 균등 takes half the
+    # pool. So a missing 비례 (REITs publish 통합 only) or an impossible one
+    # (져스텍: '비례 4:1' against 통합 2,784:1, a truncated figure) is filled
+    # from 통합 and labelled, rather than dropping the deal.
+    prop_source = "38"
+    if total_ratio and (not prop_ratio or prop_ratio < total_ratio):
+        prop_ratio, prop_source = 2.0 * total_ratio, "estimated"
 
     mm = re.search(r"일반청약자.*?청약증거금율\s*:\s*(\d+)\s*%", txt)
     margin = int(mm.group(1)) / 100.0 if mm else MARGIN_RATE_DEFAULT
 
-    limit = max([u.get("limit_high") or 0 for u in rec["underwriters"]] or [0]) or None
+    best = max(rec["underwriters"], key=lambda u: u.get("limit_high") or 0, default=None)
+    limit = (best or {}).get("limit_high") or None
+    broker = (best or {}).get("name")
+    limit_source = "38"
+    if not limit:
+        # 38 published no 청약한도 at all (세나테크놀로지). A deal is not dropped
+        # for that: estimate it from the brokerage's own allotment and label it.
+        est = parse.estimate_limit(rec["underwriters"])
+        if est:
+            limit, broker, limit_source = est["shares"], est["broker"], "estimated"
 
     retail_pool = None
     if rec.get("retail_allocation"):
@@ -82,13 +98,15 @@ def extract(no):
         "prop_ratio": prop_ratio,
         "margin": margin,
         "limit": limit,
+        "limit_source": limit_source if limit else None,
+        "prop_source": prop_source if prop_ratio else None,
         "retail_pool": retail_pool,
         "subscription_start": rec.get("subscription_start"),
         "tenor3": score.long_tenor_share(rec.get("lockup_breakdown") or {}),
         "subscription_end": rec.get("subscription_end"),
         "refund_date": rec.get("refund_date"),
         "final_price": rec.get("final_price"),
-        "broker": (rec["underwriters"][0]["name"] if rec.get("underwriters") else None),
+        "broker": broker,
         # 균등 share of the retail pool, derived: P_prop/P_total = 통합률/비례률.
         "equal_split": (1.0 - total_ratio / prop_ratio) if (total_ratio and prop_ratio and prop_ratio >= total_ratio) else None,
     }
@@ -105,13 +123,18 @@ def days_between(a, b):
 def compute(deal, ec, rate, subscribers):
     price = ec["final_price"] or deal.get("final_price")
     limit, prop = ec["limit"], ec["prop_ratio"]
-    if not price or not limit or not prop:
-        return None
-    # 비례 pool is half the retail pool, so its ratio must exceed the combined
-    # ratio. A published 비례 below it is a site data error (e.g. a truncated
-    # figure) and would fabricate an enormous allocation -- drop those.
-    if ec["total_ratio"] and prop < ec["total_ratio"]:
-        return {"skip": "비례경쟁률 %.0f < 통합 %.0f (source data error)" % (prop, ec["total_ratio"])}
+    # Name what is missing. "incomplete data" hid three different causes, and
+    # two of them were parser bugs rather than gaps on the site.
+    if not price:
+        return {"skip": "확정공모가 없음"}
+    if not prop:
+        return {"skip": "청약경쟁률 미공개 (배정 계산 불가)"}
+    if ec.get("prop_source") == "estimated" and "리츠" in (deal.get("name") or ""):
+        # 2 x 통합 was measured on deals publishing both figures, and no REIT in
+        # the sample does -- whether their 균등 split matches is unverified.
+        return {"skip": "리츠: 비례 미공개, 2×통합 추정은 리츠에서 미검증"}
+    if not limit:
+        return {"skip": "청약한도·배정물량 모두 미공개"}
 
     days = days_between(ec["subscription_end"], ec["refund_date"])
     if days is None or days < 0:
@@ -132,6 +155,7 @@ def compute(deal, ec, rate, subscribers):
         "shares_equal": shares_equal, "shares": shares, "gain": gain,
         "cost": cost, "net": gain - cost, "limit": limit, "price": price,
         "prop_ratio": prop, "broker": ec["broker"],
+        "limit_source": ec.get("limit_source"), "prop_source": ec.get("prop_source"),
         "equal_split": ec.get("equal_split"),
         # Carried for the forecast dataset, not used by the 실질손익 report.
         "sub_start": ec.get("subscription_start"), "tenor3": ec.get("tenor3"),
@@ -214,6 +238,11 @@ def build_dataset(rows):
             "days": r["days"], "capital": r["capital"], "cost": r["cost"],
             "mult": prop / inst, "prop": prop,
             "ret": r["ret"], "net": gain - r["cost"], "shares": shares,
+            # An analogue needs only mult and ret, so an estimated 청약한도
+            # costs it nothing as history. Its realised net is built on a
+            # guessed limit, though, so evaluate.py does not score it as a
+            # target.
+            "estimated": r.get("limit_source") == "estimated",
         })
     out.sort(key=lambda d: d["sub_start"])
     return out
@@ -263,9 +292,6 @@ def main():
             skipped.append((d["name"], str(exc)[:40]))
             continue
         r = compute(d, ec, rate, args.subscribers)
-        if r is None:
-            skipped.append((d["name"], "incomplete data"))
-            continue
         if "skip" in r:
             skipped.append((d["name"], r["skip"]))
             continue
@@ -305,7 +331,19 @@ def main():
                      "{:,.0f}".format(r["capital"]), "{:,.0f}".format(r["gain"]),
                      "{:,.0f}".format(r["cost"]), "{:,.0f}".format(r["net"]), r["ret"]))
     if skipped:
-        print("\nSkipped (%d): %s" % (len(skipped), ", ".join("%s [%s]" % s for s in skipped[:6])))
+        # Every one, by name: a truncated list is how 6 of 12 went unread.
+        print("\nSkipped (%d):" % len(skipped))
+        for name, why in skipped:
+            print("  %-20s %s" % (name[:19], why))
+    est = [r for r in rows if r.get("limit_source") == "estimated" or r.get("prop_source") == "estimated"]
+    if est:
+        print("\nEstimated inputs (%d) — included above, labelled in the outputs:" % len(est))
+        for r in est:
+            print("  %-20s %-5s %s%s  순 %+11s" % (
+                r["name"][:19], r["verdict"],
+                "청약한도 추정 %s주" % "{:,}".format(r["limit"]) if r.get("limit_source") == "estimated" else "",
+                " 비례 추정 %.0f:1" % r["prop_ratio"] if r.get("prop_source") == "estimated" else "",
+                "{:,.0f}".format(r["net"])))
 
     if args.no_write:
         return 0

@@ -98,6 +98,11 @@ def collect(models, rows):
     for i, target in enumerate(rows):
         if i < SKIP_FIRST:
             continue
+        # A deal whose 청약한도 was estimated stays in `hist` for later
+        # targets (mult and ret are real), but its own realised net rests on a
+        # guessed limit, so it is not scored.
+        if target.get("estimated"):
+            continue
         hist = forecast.history_for(target, rows)
         for name, model in models:
             p = model(target, hist)
