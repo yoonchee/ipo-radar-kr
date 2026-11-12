@@ -220,6 +220,8 @@ def _go_email_body(rec, verdict, fc, url):
             "{:,}".format(u["limit_low"]) if u.get("limit_low") else "?",
             "{:,}".format(u["limit_high"]) if u.get("limit_high") else "?"))
     ml = rec.get("my_limit") or {}
+    if ml.get("needs_account"):
+        L.append("⚠ %s 계좌 없음 — 청약 전에 계좌 개설 필요" % ml["broker"])
     if ml.get("multiplier"):
         L.append("내 청약한도  %s %s주 (우대 %d%%)" % (
             ml["broker"], "{:,}".format(ml["shares"]), round(ml["multiplier"] * 100)))
@@ -254,6 +256,7 @@ def _go_email_body(rec, verdict, fc, url):
 
 
 def _notify_go_banner(rec, report_path, url):
+    ml = rec.get("my_limit") or {}
     brokers = ", ".join(u["name"] for u in rec.get("underwriters", [])) or "미확인"
     ratio = rec.get("institutional_ratio")
     window = "%s~%s" % (
@@ -267,7 +270,8 @@ def _notify_go_banner(rec, report_path, url):
             ("%.1f" % rec["lockup_pct"]) if rec.get("lockup_pct") is not None else "?",
             window,
         ),
-        message="증권사: %s" % brokers,
+        message=("⚠ %s 계좌 개설 필요 · " % ml["broker"] if ml.get("needs_account") else "")
+                + "증권사: %s" % brokers,
         open_target=url or report_path,
         group="ipo-radar-%s" % (rec.get("no") or rec.get("name") or "?"),
     )
@@ -299,10 +303,12 @@ def notify_go(rec, verdict=None, report_path=None, cfg=None, fc=None):
     emailed = False
     if conf.get("notify_email"):
         emailed = send_email(
-            "[공모주 GO] %s — 청약 %s~%s" % (
+            "[공모주 GO] %s — 청약 %s~%s%s" % (
                 rec.get("name") or "?",
                 (rec.get("subscription_start") or "?")[5:],
-                (rec.get("subscription_end") or "?")[5:]),
+                (rec.get("subscription_end") or "?")[5:],
+                " · %s 계좌 개설 필요" % (rec.get("my_limit") or {})["broker"]
+                if (rec.get("my_limit") or {}).get("needs_account") else ""),
             _go_email_body(rec, verdict, fc, url),
             conf,
         )

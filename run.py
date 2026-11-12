@@ -137,6 +137,12 @@ def my_limit(rec, cfg):
     # per-brokerage correction until more deals disagree the same way.
     base_fix = {norm(k): int(v) for k, v in
                 ((cfg.get("limit_base_override") or {}).get(rec.get("no"), {}) or {}).items()}
+    # Brokerages you hold no account at (`no_account` in config.local.json).
+    # They still compete on shares: the point is to be told a GO there is worth
+    # opening an account for, so the alert carries `needs_account` rather than
+    # quietly falling back to a token 인수단 allocation elsewhere (유캐스트:
+    # 유진 20,000주 vs 신영 1,300주).
+    no_acct = {norm(k) for k in (cfg.get("no_account") or [])}
     best = None
     for u in rec.get("underwriters", []):
         name = u.get("name")
@@ -148,6 +154,7 @@ def my_limit(rec, cfg):
             cand = {"broker": name, "shares": int(u["limit_high"]), "multiplier": None}
         else:
             continue
+        cand["needs_account"] = norm(name) in no_acct
         if best is None or cand["shares"] > best["shares"]:
             best = cand
     return best
