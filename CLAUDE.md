@@ -209,7 +209,7 @@ replaces rather than duplicates even when calendar.json is missing.
 
 **우대 tiers are personal and 38 never shows them.** Nor is 38's low end one tier.
 The 투자설명서 audit (2026-11-12, 255 deals) found it the 50% tier at 한투 on 14 of
-33 deals and the 100% tier on the rest, the 200% tier at 대신 on some deals
+34 deals and the 100% tier on 18, the 200% tier at 대신 on some deals
 (토모큐브: 50,000 = 우대 200%; 일반 100% is 25,000) though not on 멜콘, 100–300% at
 신영 from deal to deal, and another brokerage's limit outright on several. A fixed
 multiple of 38's low end is therefore wrong on some deals at every brokerage.
@@ -241,6 +241,9 @@ Disagreeing with 38 is not a parse warning: it happens on a fifth of deals.
 `backtest.py` and `net_returns.py` deliberately stay on the 100% tier (below), since
 the screen is judged on the market, not on one account. So the report's EV is *your*
 EV, and is not comparable to the backtest's.
+
+**At 한투 the 100% tier is 준우대**, and the default 일반 등급 gets 50%; 우대 is 200%.
+So a 한투 tier in `my_tier_pct` is read against that ladder.
 
 **A cached DART filing list counts only if it was saved after its window closed**
 (`dart._listing_fresh`). The live screen queries the same window the backtest later
@@ -446,6 +449,8 @@ Among the last group:
 Wordings, each from a filing (one test per form in `tests/test_dart.py`):
 - `25,000주 (100%)`, `18,000 주 (온라인, 100%)`: 대신, 미래, NH, 한투, 유안타;
 - tier tables, `일반 청약자격 | 100% | 15,000주`: 삼성;
+- `청약한도의 100%인 8,000주~10,000주`: 한투 (에스에프씨, a live filing; `배정물량의 25%인` is
+  not a tier, so the pattern is anchored on 청약한도);
 - `일반(100%)그룹의 청약한도: 7,000주`, `일반고객(100%)의 청약한도 : 15,000주`: 신영, IBK;
 - no percentage, `일반고객의 청약한도 : 10,000주` or `일반청약자 최고청약한도는 20,000주
   이나`: 하나, BNK;

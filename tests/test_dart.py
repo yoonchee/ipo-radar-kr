@@ -384,12 +384,18 @@ class ProspectusLimitTest(unittest.TestCase):
             # 하나: no percentage at all, or a sentence.
             ("하나증권㈜", "(주1)", "- 우대고객의 청약한도 : 20,000주 - 일반고객의 청약한도 : 10,000주", 10000),
             ("하나증권㈜", "주1)", "하나증권㈜의 일반청약자 최고청약한도는 20,000주 이나 40,000주 (200%)까지", 20000),
+            # 에스에프씨 (한투): '청약한도의 100%인 8,000주~10,000주'.
+            ("한국투자증권㈜", "8,000주 ~ 10,000주", "일반 등급 고객의 경우 청약한도의 50%인 4,000주~5,000주, 준우대 등급 고객의 "
+             "경우 청약한도의 100%인 8,000주~10,000주, 우대 등급 고객의 경우 청약한도의 200%인 16,000주~20,000주", (8000, 10000)),
             # 에스오에스랩: tags inside the digits.
             ("한국투자증권㈜", "15, 0 00주", "준우대 등급 고객 최고청약한도는 15, 0 00주 (10 0%)이며, 3 0 , 0 00주 (200%)", 15000),
         ]
         for broker, cell, note, base in cases:
             lim = dart.parse_limits(limits_doc([[broker, "300,000주", cell, "50%"]], p(note)))
-            self.assertEqual(list(lim.values())[0]["base"], (base, base), note)
+            base = base if isinstance(base, tuple) else (base, base)
+            self.assertEqual(list(lim.values())[0]["base"], base, note)
+            if "%인" in note:
+                self.assertEqual(sorted(list(lim.values())[0]["tiers"]), [50, 100, 200], note)
 
     def test_broker_from_caption_and_plain_limit_header(self):
         # 로킷 SK: the row says '일반청약자'; the caption names the brokerage.

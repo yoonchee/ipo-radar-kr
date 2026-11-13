@@ -139,7 +139,7 @@ def my_limit(rec, cfg, limits=None, limits_note=None):
     when there is no prospectus (no DART key, not filed yet). 38 publishes one
     range per brokerage and never mentions tiers, and its low end is not one
     tier: the 투자설명서 audit (2026-11-12) found it the 50% tier at 한투 on
-    14 of 33 deals and the 100% tier on the rest. So the fallback keeps its
+    14 of 34 deals and the 100% tier on 18. So the fallback keeps its
     own key, ``my_limit_multiplier``, a multiple of 38's low end, and never
     shares numbers with ``my_tier_pct``; a brokerage with no entry falls back
     to the top of 38's range.

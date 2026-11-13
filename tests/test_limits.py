@@ -111,6 +111,20 @@ class ListingCacheTest(unittest.TestCase):
     def test_live_limits_without_a_key(self):
         self.assertEqual(dart.live_limits({"subscription_start": "2026-11-20"}, None), (None, "DART 키 없음"))
 
+    def test_live_limits_never_raises(self):
+        # A filing the parser chokes on is a reason, not a crash of the daily run.
+        saved = dart.report_xml, dart.parse_limits
+        try:
+            dart.report_xml = lambda *a, **k: "<TABLE>"
+            dart.parse_limits = lambda xml: {}["boom"]
+            got = dart.live_limits({"subscription_start": "2026-11-20", "name": "x"}, "0" * 40)
+            self.assertEqual(got, (None, "투자설명서 파싱 오류 (KeyError)"))
+            dart.report_xml = lambda *a, **k: (_ for _ in ()).throw(OSError("down"))
+            self.assertEqual(dart.live_limits({"subscription_start": "2026-11-20"}, "0" * 40),
+                             (None, "DART 오류 (OSError)"))
+        finally:
+            dart.report_xml, dart.parse_limits = saved
+
 
 if __name__ == "__main__":
     unittest.main()

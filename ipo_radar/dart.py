@@ -736,6 +736,9 @@ def parse_limits(xml: str) -> Dict[str, Dict]:
             (0, rng + r"\s*\([^()%]{0,12}?(\d+)\s*%\s*\)", (3, 1, 2)),
             # tier table '일반 청약자격 | 100% | 15,000주' -- 삼성
             (1, r"(?<![\d.(])(\d+)\s*%\s+" + rng, (1, 2, 3)),
+            # '청약한도의 100%인 8,000주~10,000주' -- 한투 (에스에프씨)
+            # ('배정물량의 25%인 2,500,000주' is not a tier, hence the anchor)
+            (1, r"청약\s*한도의\s*(\d+)\s*%\s*인\s*" + rng, (1, 2, 3)),
             # '일반(100%)그룹의 청약한도: 7,000주', '일반고객(100%)의 청약한도 : 15,000주' -- 신영, IBK
             (2, r"\(\s*(\d+)\s*%\s*\)[^\d()%]{0,20}?" + rng, (1, 2, 3)),
             # no percentage: '일반청약자 최고청약한도는 20,000주 이나 …' -- 하나, BNK
@@ -850,7 +853,10 @@ def live_limits(rec: Dict, key: Optional[str]) -> Tuple[Optional[Dict[str, Dict]
         return None, "DART 오류 (%s)" % type(exc).__name__
     if not xml:
         return None, LAST_ERROR or "투자설명서 없음"
-    limits = parse_limits(xml)
+    try:
+        limits = parse_limits(xml)
+    except Exception as exc:   # a layout the parser has not met must not stop the run
+        return None, "투자설명서 파싱 오류 (%s)" % type(exc).__name__
     if not limits:
         return None, "투자설명서에서 청약한도 표를 못 읽음"
     return limits, None
