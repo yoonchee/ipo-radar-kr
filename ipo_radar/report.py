@@ -52,6 +52,37 @@ def _brokers(rec: Dict) -> str:
     return "<br>".join(parts)
 
 
+def my_limit_lines(ml: Optional[Dict], label: str = "내 청약한도  ") -> List[str]:
+    """Where your 청약한도 came from, for the email and the calendar.
+
+    Not for an estimated limit, which its callers word themselves. A limit
+    read from the 투자설명서 says so, and so does one that fell back to 38,
+    with why: 38's low end is a different tier from deal to deal.
+    """
+    ml = ml or {}
+    if not ml or ml.get("estimated"):
+        return []
+    fmt = "{:,}".format
+    L = []
+    if ml.get("source") == "prospectus":
+        pct = round((ml.get("multiplier") or 1.0) * 100)
+        tier = "100% 기준" if pct == 100 else "우대 %d%%" % pct
+        L.append("%s%s %s주 (%s, 투자설명서)" % (label, ml["broker"], fmt(ml["shares"]), tier))
+        if ml.get("ranged"):
+            L.append("  ⚠ 투자설명서 청약한도가 아직 범위 %s~%s주 — 하한 기준, 증권사 공고 확인"
+                     % (fmt(ml["ranged"][0]), fmt(ml["ranged"][1])))
+        l38 = ml.get("l38")
+        if l38 and l38[0] and l38[0] != ml.get("base"):
+            L.append("  38 표기 %s~%s주 — 투자설명서 100%% 기준은 %s주" % (
+                fmt(l38[0]), fmt(l38[1] or l38[0]), fmt(ml["base"])))
+    else:
+        if ml.get("multiplier"):
+            L.append("%s%s %s주 (38 하한 × %g)" % (label, ml["broker"], fmt(ml["shares"]), ml["multiplier"]))
+        if ml.get("limits_note"):
+            L.append("  투자설명서 미확인 (%s) — 38 기준이라 한도가 다를 수 있음" % ml["limits_note"])
+    return L
+
+
 def _fc_name(r: Dict) -> str:
     n = r["rec"].get("name") or "?"
     return n + " ⚠추정한도" if (r.get("forecast") or {}).get("limit_estimated") else n
@@ -159,6 +190,26 @@ def render(results: List[Dict], run_date: str, parse_warnings: Optional[List] = 
                          "{:,}".format(r["rec"]["my_limit"]["low"]), "{:,}".format(r["rec"]["my_limit"]["high"]),
                          r["rec"]["my_limit"].get("note") or "")
                          for r in est))
+            L.append("")
+
+        fmt = "{:,}".format
+        mls = [(r["rec"].get("name"), r["rec"].get("my_limit") or {}) for r in go + watch]
+        moved = ["%s %s 38 %s~%s주 → 투자설명서 %s주" % (n, m["broker"], fmt(m["l38"][0]), fmt(m["l38"][1] or m["l38"][0]),
+                                                  fmt(m["base"]))
+                 for n, m in mls if m.get("source") == "prospectus" and m.get("l38") and m["l38"][0]
+                 and m["l38"][0] != m.get("base")]
+        if moved:
+            L.append("> 청약한도 (100%% 기준)가 38과 다름 — 투자설명서를 따랐습니다: %s" % ", ".join(moved))
+            L.append("")
+        ranged = ["%s %s %s~%s주" % (n, m["broker"], fmt(m["ranged"][0]), fmt(m["ranged"][1]))
+                  for n, m in mls if m.get("ranged")]
+        if ranged:
+            L.append("> ⚠ 투자설명서 청약한도가 아직 범위로만 공시됨 — 하한 기준: %s" % ", ".join(ranged))
+            L.append("")
+        unread = ["%s (%s)" % (n, m["limits_note"]) for n, m in mls if m.get("limits_note")]
+        if unread:
+            L.append("> 투자설명서 미확인 — 청약한도는 38 기준이며, 38의 하한은 증권사마다 다른 등급일 수 있습니다: %s"
+                     % ", ".join(unread))
             L.append("")
 
         L.append("### 판정 근거")

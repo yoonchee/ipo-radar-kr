@@ -174,6 +174,19 @@ class ColumnTest(unittest.TestCase):
         self.assertEqual([(r["unit"], r["eq_total"], r["prop_total"]) for r in rows],
                          [(20, 126305, 313), (30, 2322, 542)])
 
+    def test_sub_lines_that_split_the_main_lines_total(self):
+        # 래블업: a unit's second line breaks its 균등 down again (기본 + 추가)
+        # in the 균등 column. Summed over both lines it counts twice and the
+        # row fails its own total, so the main line alone is tried first.
+        main = [("10,000", 2, 1), ("200", 2, 1), ("2,000,000", 2, 1), "200", "1", "-", "-", "260",
+                "200", "-", "-", "-", "1,500", ("1,760", 2, 1), ("0.09%", 2, 1)]
+        sub = ["60", "1", "-", "-", "60", "-", "-", "-", "-", "-"]
+        rep = dart.parse_report(doc(table(HEADER + [main, sub, row(20000, 100, 100, 500)])))
+        rows = rep["tables"][0]["rows"]
+        self.assertEqual([(r["unit"], r["eq_total"], r["prop_total"]) for r in rows],
+                         [(10000, 260, 1500), (20000, 100, 500)])
+        self.assertEqual(rep["tables"][0]["rejected"], 0)
+
     def test_group_decides_what_an_addend_is(self):
         # 데이원: the 비례 total is labelled '균등배정수량(D)' under '비례방식'.
         header = [

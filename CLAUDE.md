@@ -207,24 +207,47 @@ app with a sensitive scope — verification paperwork for a one-user script. Do 
 "upgrade" this to the REST API. Event UIDs are deterministic, so a repeat write
 replaces rather than duplicates even when calendar.json is missing.
 
-**우대 tiers are personal and 38 never shows them.** 38 publishes one 청약한도
-range per brokerage (멜콘: 대신증권 20,000~25,000주). The LOW end is the 일반 base
-a brokerage's 우대 tier multiplies — measured on 멜콘, where a 우대 tier's limit
-was exactly 38's low end times the tier. `run.py:my_limit()` applies
-`my_limit_multiplier` from `config.local.json` (`{"키움증권": 1.5}`) to the live
-forecast, alerts and calendar; a brokerage with no entry falls back to the top of
-38's range, as before. `backtest.py` and `net_returns.py` deliberately stay on
-the brokerage's 100% tier from the 투자설명서 (below) — the screen is judged on the
-market, not on one account. So the report's EV is *your* EV, and is not comparable to
-the backtest's.
+**우대 tiers are personal and 38 never shows them.** Nor is 38's low end one tier.
+The 투자설명서 audit (2026-11-12, 255 deals) found it the 50% tier at 한투 on 14 of
+33 deals and the 100% tier on the rest, the 200% tier at 대신 on some deals
+(토모큐브: 50,000 = 우대 200%; 일반 100% is 25,000) though not on 멜콘, 100–300% at
+신영 from deal to deal, and another brokerage's limit outright on several. A fixed
+multiple of 38's low end is therefore wrong on some deals at every brokerage.
 
-**But 38's low end is not one tier.** The 투자설명서 audit (2026-11-12, 255 deals)
-found it to be the 50% tier at 한투/삼성/IBK, the 200% tier at 대신 on some deals
-(토모큐브: 50,000 = 우대 200%; 일반 100% is 25,000) though not on 멜콘, and 100%, 200%
-or 300% at 신영 from deal to deal. It was another brokerage's limit outright on
-several deals. A per-brokerage `my_limit_multiplier` over 38's low therefore
-cannot be right on every deal. The final 투자설명서 is filed before the 청약, so
-the live screen could read the limit from it too; that is not built yet.
+So the live screen reads the limit from the deal's final 투자설명서 too
+(`dart.live_limits`, for GO/WATCH deals only, in `attach_forecasts`). It is filed
+before the 청약: a median 7 days before its last day, 2 at the latest in the sample.
+`run.py:my_limit()` then takes, per brokerage:
+- **Your tier** from `my_tier_pct` in `config.local.json` (`{"키움증권": 150}`), a
+  percentage of that brokerage's own 100% base. The figure the prospectus prints for
+  that tier is used as is; only an unprinted tier is base × pct. A brokerage with no
+  entry gets its 100% base.
+- **A pre-pricing range** gives its low end, flagged `ranged` in every output. There is
+  no 실적보고서 yet to settle it, and 22 of the 27 ranged deals in the backtest ran low.
+- **A brokerage the prospectus didn't read** falls back to 38, and to a different key,
+  `my_limit_multiplier`, a multiple of 38's low end (`{"키움증권": 1.5}`, measured on
+  멜콘). Without a 38 entry, the top of 38's range.
+  The two keys never share numbers: a multiple set where 38 showed a brokerage's
+  50% tier is double the real tier when applied to the 100% base.
+- **A brokerage only on 38** is dropped when the prospectus read every brokerage it
+  lists (산일전기: 38 shows 삼성 with 미래's limit).
+
+`my_limit["source"]` is `prospectus`, `38` or `estimate`. Every output says which:
+- the email and calendar print `투자설명서` or `38 하한 × m`;
+- they print 38's figure when it differs from the 100% base;
+- they print why the prospectus wasn't used (`limits_note`: no key, not filed yet).
+
+Disagreeing with 38 is not a parse warning: it happens on a fifth of deals.
+`backtest.py` and `net_returns.py` deliberately stay on the 100% tier (below), since
+the screen is judged on the market, not on one account. So the report's EV is *your*
+EV, and is not comparable to the backtest's.
+
+**A cached DART filing list counts only if it was saved after its window closed**
+(`dart._listing_fresh`). The live screen queries the same window the backtest later
+reads (60 days before the 청약 to its last day), so a list cached mid-deal would
+otherwise hide the post-pricing 정정 from both. The filings themselves never change
+and stay cached. `corpCode.xml` is re-downloaded at most once a day for a ticker it
+lacks: a company DART does not list yet is found by name.
 
 `config.local.json` is merged over `config.json` and is gitignored — the alert
 address lives there, because `config.json` is published. A fresh checkout has no
@@ -280,8 +303,8 @@ Two consequences, both already encoded:
 ### DART 증권발행실적보고서 — the allocation record, after the fact
 
 `ipo_radar/dart.py` reads the filing that every offering submits after its 청약.
-- **Filed after close:** it's history only — backtest, 실질손익 and forecast analogues —
-  and never a live input.
+- **Filed after close:** it's history only — backtest, 실질손익 and forecast analogues.
+  The live input from DART is the 투자설명서 (above), not this.
 - **Key:** in the login keychain, service `ipo-radar-dart`; without it `net_returns.py`
   says so and uses the formula.
 - **Caching and pace:** responses are cached under `state/cache/dart/`, at 1s between
@@ -494,9 +517,9 @@ What the harness established, and what you should not undo:
   everything else, rank corr 0.277 vs 0.397 shipped; n=177 scored, 2026-11-12,
   on DART-read allocations at 투자설명서 limits).
   Smooth kernel weighting beat it because it uses every past deal instead of a
-  handful in-or-out. The figures were 62.2/~41 and 0.307/0.460 at an earlier
-  build; that drop is not recent deals being mis-ranked — targets listed before
-  2026-10-01 score 0.372 and the 14 since score 0.367.
+  handful in-or-out. It ranks recent deals no worse:
+  targets listed before 2026-10-01 score rho 0.398 (n=163), and the 14 since score
+  0.398.
 - **No third feature beat the shipped model on either metric.** 3개월+ tenor share,
   band position, and recency decay all scored worse on both MAE and rank correlation
   (2026-11-12: shipped 45.2만 / 0.397; tenor3 49.5만 / 0.312, band position 46.7만 / 0.295).

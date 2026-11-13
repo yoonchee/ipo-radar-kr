@@ -25,7 +25,7 @@ import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from ipo_radar import calendar_sync, fetch, forecast, notify, parse, report, score
+from ipo_radar import calendar_sync, dart, fetch, forecast, notify, parse, report, score
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 STATE_DIR = os.path.join(ROOT, "state")
@@ -124,36 +124,46 @@ def select_candidates(schedule, cfg, today, take_all=False):
 DATASET = os.path.join(STATE_DIR, "cache", "dataset.json")
 
 
-def my_limit(rec, cfg):
+def my_limit(rec, cfg, limits=None, limits_note=None):
     """Your own maximum 청약한도 for this deal, and which brokerage gives it.
 
-    38.co.kr publishes one range per brokerage (멜콘: 대신증권 20,000~25,000주)
-    and never mentions 우대 tiers. Those belong to you and the brokerage, not to
-    the deal: a 우대 tier put 멜콘 at exactly 38's low end times the tier,
-    which pins the LOW end of 38's range as the 일반 base a tier multiplies.
+    The source is the deal's final 투자설명서 wherever it was read
+    (``limits``, from ``dart.live_limits``): it prints each brokerage's tiers
+    (삼성: 50% / 100% / 200%), and your tier is a percentage of that
+    brokerage's 100% base, kept in the gitignored config.local.json as
+    {"my_tier_pct": {"키움증권": 150}}. The printed tier figure is used as is;
+    only a tier the prospectus does not print is base x pct. A brokerage with
+    no entry gets its 100% base.
 
-    Tiers live in the gitignored config.local.json as
-    {"my_limit_multiplier": {"키움증권": 1.5}} -- personal financial status has
-    no place in the published config. A brokerage with no entry falls back to
-    the top of 38's range, which is what every forecast used before this.
+    38 is the fallback, per brokerage, for any the prospectus left unread or
+    when there is no prospectus (no DART key, not filed yet). 38 publishes one
+    range per brokerage and never mentions tiers, and its low end is not one
+    tier: the 투자설명서 audit (2026-11-12) found it the 50% tier at 한투 on
+    14 of 33 deals and the 100% tier on the rest. So the fallback keeps its
+    own key, ``my_limit_multiplier``, a multiple of 38's low end, and never
+    shares numbers with ``my_tier_pct``; a brokerage with no entry falls back
+    to the top of 38's range.
 
-    Returns {"broker", "shares", "multiplier"}; multiplier is None when the
-    figure is 38's standard limit rather than a personal one. When 38 publishes
-    no 청약한도 at all, it is estimated from the brokerage's allotment
-    (`parse.estimate_limit`) and marked {"estimated": True, "low", "high"}:
-    a GO must not lose its numbers just because the limit is not out yet.
+    Returns {"broker", "shares", "multiplier", "source"}; multiplier is None
+    when no personal tier applies. ``source`` is "prospectus" or "38", and
+    ``l38`` carries 38's range for comparison. A prospectus that still
+    prints a pre-pricing range gives its low end, flagged ``ranged`` -- with
+    no 실적보고서 yet there is nothing to settle it by, and 22 of 27 such
+    deals in the backtest ran the low end. When neither source has a limit it
+    is estimated from the brokerage's allotment (`parse.estimate_limit`) and
+    marked {"estimated": True, "low", "high"}: a GO must not lose its numbers
+    just because the limit is not out yet.
     """
     # Compare without a trailing 증권: 38 occasionally truncates a name (one
     # 신한 deal reads "신한투자" against 21 reading "신한투자증권"), and an exact
     # match would miss it silently, falling back to the standard limit.
     norm = lambda n: (n or "").strip()[:-2] if (n or "").strip().endswith("증권") else (n or "").strip()
     mult = {norm(k): v for k, v in (cfg.get("my_limit_multiplier") or {}).items()}
-    # 38's low end is not always the 일반 base. 동원파츠 (no 2339) read
-    # 삼성증권 12,500~15,000주 on 38 while 삼성 itself showed 일반 25,000주, so
-    # `limit_base_override` ({"<no>": {"<broker>": base}}) corrects 38's figure
-    # for one deal. It replaces the base, not the result: the 우대 tier still
-    # multiplies it. One measurement is not a pattern -- don't turn this into a
-    # per-brokerage correction until more deals disagree the same way.
+    tier = cfg.get("my_tier_pct") or {}
+    # `limit_base_override` ({"<no>": {"<broker>": base}}) corrects the base
+    # for one deal by hand (동원파츠 read 삼성 12,500 on 38 against 삼성's own
+    # 25,000, before the 투자설명서 was read). It replaces the base, not the
+    # result: the tier still multiplies it.
     base_fix = {norm(k): int(v) for k, v in
                 ((cfg.get("limit_base_override") or {}).get(rec.get("no"), {}) or {}).items()}
     # Brokerages you hold no account at (`no_account` in config.local.json).
@@ -161,27 +171,68 @@ def my_limit(rec, cfg):
     # opening an account for, so the alert carries `needs_account` rather than
     # quietly falling back to a token 인수단 allocation elsewhere (유캐스트:
     # 유진 20,000주 vs 신영 1,300주).
-    no_acct = {norm(k) for k in (cfg.get("no_account") or [])}
-    best = None
-    for u in rec.get("underwriters", []):
+    no_acct = list(cfg.get("no_account") or [])
+    unders = rec.get("underwriters", [])
+
+    def lookup(table, name):
+        return next((v for k, v in table.items() if dart._same_broker(k, name)), None)
+
+    cands = []
+    read = set()
+    for b, v in (limits or {}).items():
+        if not v.get("base"):
+            continue
+        u = next((u for u in unders if dart._same_broker(u.get("name"), b)), None)
+        name = u["name"] if u else b
+        read.add(norm(name))
+        fixed = lookup(base_fix, name)
+        base = fixed or v["base"][0]
+        pct = lookup(tier, name)
+        p = float(pct) if pct else 100.0
+        # Tier keys are whole percentages; 200.0 finds 200.
+        if not fixed and p in v["tiers"]:
+            shares = v["tiers"][p][0]
+        else:
+            shares = int(round(base * p / 100.0))
+        cand = {"broker": name, "shares": int(shares), "source": "prospectus",
+                "multiplier": float(pct) / 100.0 if pct else None, "base": base,
+                "l38": (u.get("limit_low"), u.get("limit_high")) if u else None}
+        if v["base"][0] != v["base"][1]:
+            cand["ranged"] = tuple(v["base"])
+        cands.append(cand)
+    # A brokerage on 38 that the prospectus does not list at all is taken
+    # from 38 only when the prospectus left some brokerage unread; when it
+    # read every one, the extra name is 38's error (산일전기: 삼성 shown with
+    # 미래's limit), as the backtest found.
+    complete = bool(limits) and all(v.get("base") for v in limits.values())
+    for u in unders:
         name = u.get("name")
+        if norm(name) in read:
+            continue
+        if complete and not any(dart._same_broker(name, b) for b in limits):
+            continue
         low = base_fix.get(norm(name)) or u.get("limit_low")
         if norm(name) in mult and low:
             m = float(mult[norm(name)])
-            cand = {"broker": name, "shares": int(low * m), "multiplier": m}
+            cands.append({"broker": name, "shares": int(low * m), "multiplier": m, "source": "38"})
         elif u.get("limit_high"):
-            cand = {"broker": name, "shares": int(u["limit_high"]), "multiplier": None}
-        else:
-            continue
-        cand["needs_account"] = norm(name) in no_acct
+            cands.append({"broker": name, "shares": int(u["limit_high"]), "multiplier": None,
+                          "source": "38"})
+    best = None
+    for cand in cands:
+        # By _same_broker: the prospectus spells 유진투자증권 "유진증권".
+        cand["needs_account"] = any(dart._same_broker(k, cand["broker"]) for k in no_acct)
         if best is None or cand["shares"] > best["shares"]:
             best = cand
     if best is None:
-        est = parse.estimate_limit(rec.get("underwriters"))
+        est = parse.estimate_limit(unders)
         if est:
             best = {"broker": est["broker"], "shares": est["shares"], "multiplier": None,
                     "estimated": True, "low": est["low"], "high": est["high"], "note": est["note"],
-                    "needs_account": norm(est["broker"]) in no_acct}
+                    "needs_account": any(dart._same_broker(k, est["broker"]) for k in no_acct),
+                    "source": "estimate"}
+    if best is not None and best["source"] != "prospectus" and limits_note:
+        best["limits_note"] = limits_note
     return best
 
 
@@ -199,15 +250,19 @@ def attach_forecasts(results, cfg=None):
             history = json.load(fh)
     except ValueError:
         return
+    key = dart.api_key()
     for r in results:
         if r["verdict"]["verdict"] not in ("GO", "WATCH"):
             continue
         rec = r["rec"]
         # Forecast at YOUR limit: allocation and 증거금 both scale with it, so a
         # 200% 우대 roughly doubles the expected won. The backtest and
-        # net_returns.py deliberately stay on 38's standard limit -- the screen
-        # is judged on the market, not on one person's account status.
-        mine = my_limit(rec, cfg or {})
+        # net_returns.py deliberately stay on each brokerage's 100% tier -- the
+        # screen is judged on the market, not on one person's account status.
+        # The limits come from the 투자설명서, fetched only for GO/WATCH: two
+        # DART calls a deal at most, at the same 1s pace.
+        limits, why = dart.live_limits(rec, key)
+        mine = my_limit(rec, cfg or {}, limits, why)
         rec["my_limit"] = mine
         limit = mine["shares"] if mine else 0
         price, sub_end, refund = rec.get("final_price"), rec.get("subscription_end"), rec.get("refund_date")

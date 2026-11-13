@@ -28,6 +28,8 @@ import ssl
 import subprocess
 from typing import Dict, Optional
 
+from .report import my_limit_lines
+
 
 def _find_terminal_notifier():
     """Locate terminal-notifier without relying on PATH.
@@ -227,9 +229,7 @@ def _go_email_body(rec, verdict, fc, url):
                  "아래 금액은 추정 한도 기준이니 증권사 공고 확인" % (
                      ml["broker"], "{:,}".format(ml["shares"]),
                      "{:,}".format(ml["low"]), "{:,}".format(ml["high"]), ml.get("note") or ""))
-    if ml.get("multiplier"):
-        L.append("내 청약한도  %s %s주 (우대 %d%%)" % (
-            ml["broker"], "{:,}".format(ml["shares"]), round(ml["multiplier"] * 100)))
+    L += my_limit_lines(ml)
     if fc:
         L.append("")
         L.append("기대손익 (실질)")

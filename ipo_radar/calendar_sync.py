@@ -39,6 +39,8 @@ import urllib.parse
 import urllib.request
 from typing import Dict, List, Optional
 
+from .report import my_limit_lines
+
 # apps.google.com answers 405 to PROPFIND; www.google.com is the host that
 # speaks CalDAV. Verified empirically -- do not "modernise" this hostname.
 DAV_BASE = "https://www.google.com/calendar/dav"
@@ -238,16 +240,13 @@ def _limits_line(rec):
 
 
 def _my_limit_line(rec):
-    """'내 청약한도' when a 우대 tier applies -- 38's ranges never show it."""
+    """'내 청약한도' and where it came from (투자설명서 or 38)."""
     ml = rec.get("my_limit") or {}
     if ml.get("estimated"):
         return ["⚠ 청약한도 미공개 — %s 추정 %s주 (%s~%s; %s), 증권사 공고 확인" % (
             ml["broker"], "{:,}".format(ml["shares"]),
             "{:,}".format(ml["low"]), "{:,}".format(ml["high"]), ml.get("note") or "")]
-    if not ml.get("multiplier"):
-        return []
-    return ["내 청약한도    %s %s주 (우대 %d%%)" % (
-        ml["broker"], "{:,}".format(ml["shares"]), round(ml["multiplier"] * 100))]
+    return my_limit_lines(ml, label="내 청약한도    ")
 
 
 def _forecast_lines(fc, indent="  "):

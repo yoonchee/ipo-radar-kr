@@ -8,13 +8,18 @@ the 균등/비례 split, and a per-brokerage table of every 청약 amount with t
 which is what the user's account received.
 
 It is filed AFTER the 청약 closes, so it is history only -- the backtest, the
-실질손익 figures and the forecast's analogues. Nothing live depends on it.
+실질손익 figures and the forecast's analogues.
+
+The 투자설명서 is filed BEFORE the 청약, and it is the one live input here:
+``live_limits`` reads each brokerage's 청약한도 tiers from it for the daily
+screen, since 38's copy of them is not one consistent tier.
 
 The API key is in the login keychain (service ``ipo-radar-dart``), never on
 disk. Responses are cached under ``state/cache/dart/``; a filing does not
 change once filed, except by a 정정, and the newest one is taken.
 """
 
+import datetime
 import html
 import io
 import json
@@ -35,6 +40,7 @@ DELAY_S = 1.0          # same courtesy as fetch.py, though OpenDART allows 20,00
 _last = [0.0]
 _refreshed = [False]   # the code list is re-downloaded at most once per process
 LAST_ERROR = None      # type: Optional[str]
+_codes_memo = {}       # type: Dict
 
 
 def api_key() -> Optional[str]:
@@ -68,6 +74,8 @@ def _corp_codes(key: str) -> Dict[str, str]:
     listed), so names are indexed too, for the fallback.
     """
     path = os.path.join(CACHE, "corpCode.xml")
+    if os.path.exists(path) and _codes_memo.get("mtime") == os.path.getmtime(path):
+        return _codes_memo["codes"]
     if not os.path.exists(path):
         os.makedirs(CACHE, exist_ok=True)
         z = zipfile.ZipFile(io.BytesIO(_get("corpCode.xml", key)))
@@ -87,6 +95,7 @@ def _corp_codes(key: str) -> Dict[str, str]:
             names.setdefault(norm_name(nm.group(1)), []).append(corp)
     for n, corps in names.items():
         out["name:" + n] = ",".join(corps)
+    _codes_memo.update(mtime=os.path.getmtime(path), codes=out)   # 116,000 entries: parse once
     return out
 
 
@@ -114,10 +123,14 @@ def report_xml(ticker: str, bgn: str, end: str, key: str, name: Optional[str] = 
     LAST_ERROR = None
     codes = _corp_codes(key)
     corps = [codes[ticker]] if ticker in codes else []
-    if not corps and not _refreshed[0]:
-        _refreshed[0] = True   # listed since the code file was cached
+    code_path = os.path.join(CACHE, "corpCode.xml")
+    # Listed since the code file was cached? Re-download it, but at most once
+    # a day: a live deal has a ticker DART does not list until it lists, and
+    # would otherwise re-fetch the whole file on every run.
+    if not corps and not _refreshed[0] and _saved_before_today(code_path):
+        _refreshed[0] = True
         try:
-            os.remove(os.path.join(CACHE, "corpCode.xml"))
+            os.remove(code_path)
         except OSError:
             pass
         codes = _corp_codes(key)
@@ -134,12 +147,32 @@ def report_xml(ticker: str, bgn: str, end: str, key: str, name: Optional[str] = 
     return None
 
 
+def _saved_before_today(path: str) -> bool:
+    if not os.path.exists(path):
+        return True
+    return time.strftime("%Y-%m-%d", time.localtime(os.path.getmtime(path))) < time.strftime("%Y-%m-%d")
+
+
+def _listing_fresh(path: str, end: str) -> bool:
+    """A cached filing list counts only if it was saved after its window closed.
+
+    A list saved mid-window misses whatever is filed later -- the post-pricing
+    정정 투자설명서 above all -- and the live screen queries the same window
+    the backtest later reads, so a mid-deal listing would otherwise pin both.
+    The filings themselves (``<rcept_no>.xml``) never change and stay cached.
+    """
+    if not os.path.exists(path):
+        return False
+    saved = time.strftime("%Y-%m-%d", time.localtime(os.path.getmtime(path)))
+    return saved > end
+
+
 def _report_for_corp(corp: str, bgn: str, end: str, key: str, kind: str = REPORT) -> Optional[str]:
     global LAST_ERROR
 
     list_path = os.path.join(CACHE, "list-%s-%s.json" % (corp, bgn) if kind == REPORT
                              else "list-%s-%s-%s.json" % (corp, bgn, end))
-    if os.path.exists(list_path):
+    if _listing_fresh(list_path, end):
         with open(list_path, encoding="utf-8") as fh:
             listing = json.load(fh)
     else:
@@ -793,3 +826,31 @@ def prospectus_limit(limits: Dict[str, Dict], alloc: Optional[float],
     ends = {b: end(b, v) for b, v in based.items()}
     b = max(ends, key=lambda k: ends[k][0])
     return {"broker": b, "limit": ends[b][0], "derived": based[b]["derived"], "end": ends[b][1]}
+
+
+def live_limits(rec: Dict, key: Optional[str]) -> Tuple[Optional[Dict[str, Dict]], Optional[str]]:
+    """The 투자설명서's per-brokerage limits for a live deal, or (None, why not).
+
+    The newest non-예비 투자설명서 filed from 60 days before the 청약 until
+    its last day -- a post-pricing 정정 replaces the first one. Never raises:
+    the daily run must finish whatever DART does, and the caller falls back
+    to 38 for every brokerage this leaves unread.
+    """
+    if not key:
+        return None, "DART 키 없음"
+    start = rec.get("subscription_start")
+    if not start:
+        return None, "청약일 미정"
+    try:
+        s0 = [int(x) for x in start.split("-")]
+        bgn = (datetime.date(*s0) - datetime.timedelta(days=60)).isoformat()
+        xml = report_xml(rec.get("ticker") or "", bgn, rec.get("subscription_end") or start, key,
+                         name=rec.get("name"), kind=PROSPECTUS)
+    except Exception as exc:   # network, zip, JSON: never the URL, which carries the key
+        return None, "DART 오류 (%s)" % type(exc).__name__
+    if not xml:
+        return None, LAST_ERROR or "투자설명서 없음"
+    limits = parse_limits(xml)
+    if not limits:
+        return None, "투자설명서에서 청약한도 표를 못 읽음"
+    return limits, None

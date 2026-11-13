@@ -129,17 +129,30 @@ config file nor in the launchd plist.
 
 ### Your 우대 청약한도
 
-38.co.kr shows each brokerage's standard 청약한도 range and nothing about 우대
-tiers, which depend on your status at that brokerage. Record yours in
-`config.local.json` as a multiplier on the low end of 38's range:
+38.co.kr shows one 청약한도 range per brokerage and nothing about 우대 tiers, and
+its low end is not even one tier: against the 투자설명서 of 255 deals it was the
+100% tier on 207, the 50% tier on 19 (한투, 삼성, IBK), 200–300% on 5, and another
+brokerage's figure on several. So for a GO or WATCH deal the screen reads the
+deal's final 투자설명서 from DART, which prints every brokerage's tiers, and
+applies yours as a percentage of that brokerage's own 100% base, in
+`config.local.json`:
+
+```json
+{ "my_tier_pct": { "키움증권": 150 } }
+```
+
+The forecast, alert email and calendar events then use your real limit and
+증거금, and say where it came from (`투자설명서`, with 38's figure when it differs).
+When there is no 투자설명서 yet, or no DART key, a brokerage falls back to 38 and
+to a separate key, a multiple of 38's low end:
 
 ```json
 { "my_limit_multiplier": { "키움증권": 1.5 } }
 ```
 
-The forecast, alert email and calendar events then use your real limit and
-증거금. The backtest does not — it
-measures the screen, not your account.
+That fallback is labelled in every output, since 38's low end may be another tier.
+The backtest uses neither — it measures the screen at each brokerage's 100% tier,
+not your account.
 
 ### Calendar events
 
@@ -258,35 +271,42 @@ python3 net_returns.py --rate 3.0 --subscribers 150000   # add an assumed 균등
 open state/backtest/net-latest.html
 ```
 
-Over the same 234 deals, at maximum 청약한도 and a 3%/yr opportunity cost:
+Over 255 deals (2023-06 to 2026-11), at each deal's 100% 청약한도 from its
+투자설명서 and a 3%/yr opportunity cost:
 
 | Bucket | n | 순손익 | 초과수익률¹ | 평균 배정 |
 |---|---:|---:|---:|---:|
-| **GO** | 114 | **+1,581만** | **+10.01%** | 16주 |
-| WATCH | 69 | +4만 | +0.03% | 39주 |
-| PASS | 51 | −3,442만 | −22.80% | 884주 |
-| *전 종목* | 234 | **−1,857만** | −4.33% | 212주 |
+| **GO** | 120 | **+1,836만** | **+13.08%** | 17주 |
+| WATCH | 78 | +438만 | +3.05% | 35주 |
+| PASS | 57 | −8,357만 | −55.05% | 1,399주 |
+| *전 종목* | 255 | **−6,084만** | −13.96% | 331주 |
 
 ¹ Won per won-year of capital committed, *on top of* the 3% it would have earned idle.
 
-**Subscribing to everything loses money** — 86% of deals rose at the open, and the
-strategy still ends 1,857만 down. The losses concentrate where competition was weak:
-nobody wanted those deals, so you were filled with hundreds of shares, and they fell.
-노머스 (비례 5:1) returned 3,300 shares on 24,915만 committed at −29% — a single
-2,875만 loss.
+**Subscribing to everything loses money** — 84% of deals rose at the open, and the
+strategy still ends 6,084만 down. The losses concentrate where competition was weak:
+nobody wanted those deals, so you were filled with thousands of shares, and they fell.
+엠앤씨솔루션 (비례 5:1) filled 6,807 shares at −11% — a 4,784만 loss on its own —
+and 노머스 4,358 shares at −29%, 3,795만.
 
-This is also why WATCH does not notify: **+0.03% excess return is zero**, before the
-friction of moving funds.
+This is also why WATCH does not notify: +3.05%, and +2.30% without one lucky deal
+(이에스티), is small next to GO's +13% before the friction of moving funds.
 
 ### What is measured vs assumed
 
-배정 is **비례 only**: `floor(청약한도 / 비례경쟁률)`, both published per deal. 균등 is
-excluded because 청약건수 (how many people subscribed) is published nowhere. The
-50/50 pool split *is* derivable as `1 − 통합률/비례률` and holds for 235 of 237 deals,
-but pool size cannot give shares per person. Every figure above is therefore a
-**floor**; a plausible 균등 adds roughly 10–15% to the GO net and changes no
-conclusion. Before fees and tax; assumes one broker, no capital reuse across
-overlapping deals.
+배정 is **read, not computed**, wherever DART has it. Every offering files a
+증권발행실적보고서 after its 청약, with one table per brokerage giving every 청약
+amount, its 청약건수, and the 균등 and 비례 shares each application received.
+`ipo_radar/dart.py` reads that table at the deal's 청약한도: 252 of 255 deals exactly,
+3 interpolated between neighbouring rows. Only where no filing can be read does
+`net_returns.py` fall back to `floor(청약한도 / 비례경쟁률)` plus an assumed 균등, and
+the row says so (`alloc_source`).
+
+The 청약한도 is read from each deal's 투자설명서, not from 38.co.kr, whose figure is
+a different tier from deal to deal (below). It needs a free OpenDART key in the login
+keychain (service `ipo-radar-dart`, account `dart`); without one, both fall back to
+38 and the formula, labelled. Before fees and tax; assumes one broker, no capital
+reuse across overlapping deals.
 
 ## 기대손익 — the forecast
 
@@ -303,8 +323,9 @@ Two ranges, answering different questions. **결과 범위** is where *this deal
 should land 8 times in 10 — the analogues' own spread. **평균 추정오차** is the bootstrap
 interval of the EV itself: how sure the average is, not where any one deal ends up.
 Read as an outcome range it is badly wrong — none of the 13 deals listed 2026-08-13 to
-10-22 finished inside it. Walk-forward over 203 deals, 결과 범위 held 81% of outcomes at
-기관경쟁률 ≥ 600 (nominal 80%), and 흑자확률 was 82% against 85% realised.
+10-22 finished inside it. Walk-forward over 143 deals at
+기관경쟁률 ≥ 600, 결과 범위 held 80% of outcomes (nominal 80%), and 흑자확률 was 82%
+against 84% realised.
 
 At the moment 수요예측 publishes, two unknowns stand between a verdict and a cash
 outcome: how hard *retail* will compete (which sets your allocation) and where the
