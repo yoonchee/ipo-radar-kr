@@ -132,6 +132,20 @@ class UnderwriterShapeTest(unittest.TestCase):
         self.assertEqual(w, [])
 
 
+    def test_limit_at_or_above_allotment_is_dropped(self):
+        # 파로스아이바이오: 38 printed its 주식수 as the 청약한도. 산일전기: 삼성
+        # (65,000~78,000주) carried 미래's 90,000~105,000.
+        got, w = brokers(["주간사", "한국투자증권", "주식수: 350,000~420,000 주 / 청약한도: 350,000~420,000 주"])
+        self.assertEqual(got, [("한국투자증권", None, None)])
+        self.assertEqual(len(w), 1)
+        got, w = brokers(["주간사", "미래에셋증권,삼성증권", "주식수: 1,900,000 주 / 청약한도: - 주",
+                          "인수회사", "주식수", "청약한도", "기타",
+                          "미래에셋증권", "1,560,000 ~ 1,872,000 주", "90,000 ~ 105,000 주",
+                          "삼성증권", "65,000 ~ 78,000 주", "90,000 ~ 105,000 주"])
+        self.assertEqual(got, [("미래에셋증권", 90000, 105000), ("삼성증권", None, None)])
+        self.assertIn("삼성증권", w[0])
+
+
 class EstimateLimitTest(unittest.TestCase):
     def test_uses_largest_allotment(self):
         est = parse.estimate_limit([

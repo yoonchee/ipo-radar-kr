@@ -321,6 +321,28 @@ def _same_broker(a: str, b: str) -> bool:
 
 
 def _parse_underwriters(f: "_Fields", warnings: Optional[List[str]] = None) -> List[Dict]:
+    """The brokerage list (see `_read_underwriters`), minus impossible limits.
+
+    A 청약한도 at or above the brokerage's own 주식수 cannot be one: no single
+    application may take a brokerage's whole allotment. 38 has printed both
+    shapes -- 파로스아이바이오 shows 주식수 350,000~420,000 and 청약한도
+    350,000~420,000, and 산일전기 gives 삼성 (65,000~78,000주) 미래's
+    90,000~105,000. Taken as read, the first put 29.4억 of 증거금 into the
+    backtest. The limit is dropped -- `estimate_limit()` then fills it,
+    labelled -- and the warning names the page.
+    """
+    out = _read_underwriters(f, warnings)
+    for u in out:
+        cap = (u.get("shares") or {}).get("low")
+        if u.get("limit_high") and cap and u["limit_high"] >= cap:
+            if warnings is not None:
+                warnings.append("%s 청약한도 %s주가 배정물량 %s주 이상 — 38 오기, 한도 무시"
+                                % (u["name"], "{:,}".format(u["limit_high"]), "{:,}".format(cap)))
+            u["limit_low"] = u["limit_high"] = None
+    return out
+
+
+def _read_underwriters(f: "_Fields", warnings: Optional[List[str]] = None) -> List[Dict]:
     """Per-brokerage subscription terms.
 
     The block has a summary line (``주식수: N 주 / 청약한도: A~B 주``) and, on

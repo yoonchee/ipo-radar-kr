@@ -67,15 +67,18 @@ None raised an error. The guard:
 
 - **Digits in a cell that didn't parse are a parse warning** (`parse._unreadable`), in
   `parse_detail()`'s `parse_warnings` and `parse_demand_results(page, warnings)`.
-- **Invariants:** a 확정공모가 with no 기관경쟁률 after the backfill (they publish
-  together), and a summary-line brokerage missing from the parsed list.
+- **Invariants:**
+  - a 확정공모가 with no 기관경쟁률 after the backfill (they publish together);
+  - a summary-line brokerage missing from the parsed list;
+  - a 청약한도 at or above the brokerage's own 주식수. That one is dropped, not kept.
 - **Warnings are surfaced:** at the top of the report, in the GO email, on stderr, and as
   one banner per new message (`state/warned.json`).
 - **`net_returns.py` names every skip and its exact cause.** It used to print 6 of 12
   under one "incomplete data" label.
 
-Over all 302 pages on disk the warnings fire zero times. Keep it that way: a warning that
-fires on legitimate data teaches you to ignore it.
+Over all 273 detail pages on disk the warnings fire on exactly two, both genuine 38
+errors: 파로스아이바이오 shows its 주식수 as its 청약한도, and 산일전기 gives 삼성 미래's
+limit. Keep it that way: a warning that fires on legitimate data teaches you to ignore it.
 
 ## Architecture
 
@@ -124,6 +127,9 @@ only the pages you meant to change should move.
 When 38 publishes no limit at all, the parser can't produce one:
 - **세나테크놀로지** shows `청약한도: -` and has no table.
 - **A live deal** can still have `- 주` in every row when it goes GO, as 에스에프씨 did.
+- **An impossible limit counts as none.** A 청약한도 at or above the brokerage's own
+  주식수 is a 38 error. 파로스아이바이오's "420,000주" was its share count, and taken as
+  read it put 29.4억 of 증거금 into the backtest.
 
 So `parse.estimate_limit()` takes 4% of the largest brokerage's own 일반 allotment. Over
 the sample, 청약한도 as a share of that allotment has a median of 4.0% either way. The
@@ -208,8 +214,17 @@ was exactly 38's low end times the tier. `run.py:my_limit()` applies
 `my_limit_multiplier` from `config.local.json` (`{"키움증권": 1.5}`) to the live
 forecast, alerts and calendar; a brokerage with no entry falls back to the top of
 38's range, as before. `backtest.py` and `net_returns.py` deliberately stay on
-38's standard limit — the screen is judged on the market, not on one account.
-So the report's EV is *your* EV, and is not comparable to the backtest's.
+the brokerage's 100% tier from the 투자설명서 (below) — the screen is judged on the
+market, not on one account. So the report's EV is *your* EV, and is not comparable to
+the backtest's.
+
+**But 38's low end is not one tier.** The 투자설명서 audit (2026-11-12, 255 deals)
+found it to be the 50% tier at 한투/삼성/IBK, the 200% tier at 대신 on some deals
+(토모큐브: 50,000 = 우대 200%; 일반 100% is 25,000) though not on 멜콘, and 100%, 200%
+or 300% at 신영 from deal to deal. It was another brokerage's limit outright on
+several deals. A per-brokerage `my_limit_multiplier` over 38's low therefore
+cannot be right on every deal. The final 투자설명서 is filed before the 청약, so
+the live screen could read the limit from it too; that is not built yet.
 
 `config.local.json` is merged over `config.json` and is gitignored — the alert
 address lives there, because `config.json` is published. A fresh checkout has no
@@ -239,24 +254,219 @@ Two things to keep in mind before re-fitting anything:
 ## 시초/공모 percentages are not money — use net_returns.py
 
 `backtest.py` measures the price move. `net_returns.py` measures the trade, and the two
-disagree about the headline. Subscribing at max 청약한도 to *every* deal loses 3,132만 won
+disagree about the headline. Subscribing at the 100% 청약한도 to *every* deal loses 6,084만 won
 over the sample (n=255, rebuilt 2026-11-12) despite 84% of deals rising at the open,
 because 증거금 (50% of 청약한도 × 확정공모가) sits idle from 청약일 to 환불일, and because
 weak deals — the ones nobody wants — fill you with hundreds of shares right before they
-fall. GO earns +12.17% excess return; PASS earns −30.79%.
+fall. GO earns +13.08% excess return; PASS earns −55.05%.
 
 Two consequences, both already encoded:
 
-- **WATCH does not notify.** It measured +1.74% over 78 deals, but one lucky deal carries
-  much of that: 이에스티 (630:1, 확약 0.24%) drew 380주 when the forecast expected 16 and
-  happened to open +28%. Without it WATCH is +0.98% over 77 deals — noise next to GO's +12%.
+- **WATCH does not notify.** It measured +3.05% over 78 deals, but one lucky deal carries
+  much of that: 이에스티 (630:1, 확약 0.24%) drew 321주 비례 at 18,000 when the forecast
+  expected 16, and happened to open +28%. Without it WATCH is +2.30% over 77 deals,
+  small next to GO's +13%.
   `run.py` raises a banner only for a newly-GO deal. Don't "fix" this by restoring a summary
   notification.
-- **배정 is 비례 only** — `floor(청약한도 / 비례경쟁률)`. 균등 is excluded because 청약건수 is
-  published nowhere on 38.co.kr. The 50/50 pool split *is* derivable as `1 − 통합률/비례률`
-  (holds for 235/237 deals), but pool size cannot give shares per person, so every net
-  figure is a floor. Don't invent a 청약건수 to "complete" it; the sensitivity is ±10–15%
-  and changes no conclusion.
+- **배정 is read from DART, computed only where it can't be.** 38 publishes no
+  청약건수, but the 증권발행실적보고서 on DART does. It also has one table per brokerage
+  with every 청약 amount and the 균등 and 비례 shares each application got. See
+  `ipo_radar/dart.py` and the section below. Elsewhere `net_returns.py` falls back to
+  `floor(청약한도 / 비례경쟁률)` plus a 균등 at an assumed 150,000 subscribers. Every row
+  carries `alloc_source` (`dart`, `dart_interp` or `38`). The forecast dataset stays 비례-only either
+  way. Don't invent a 청약건수 for a fallback deal; read it from DART or leave the
+  assumption labelled.
+
+### DART 증권발행실적보고서 — the allocation record, after the fact
+
+`ipo_radar/dart.py` reads the filing that every offering submits after its 청약.
+- **Filed after close:** it's history only — backtest, 실질손익 and forecast analogues —
+  and never a live input.
+- **Key:** in the login keychain, service `ipo-radar-dart`; without it `net_returns.py`
+  says so and uses the formula.
+- **Caching and pace:** responses are cached under `state/cache/dart/`, at 1s between
+  calls.
+- **Company lookup:** by 종목코드, falling back to name. Tickers can contain letters
+  (`0015M0`), and a company that only just listed has no code in DART's list yet.
+
+What it established:
+- **Exact for 동원파츠:** 통합 1219.37 against 38's 1219.37, and 32,500주 → 균등 1 + 비례 13,
+  the allocation actually received.
+- **Weak deals hand out far more than the formula says.** Leftover and unpaid 균등 goes
+  to 비례: 엠앤씨솔루션 (2.4:1) gave a 20,000주 KB application 7,559 shares against the
+  formula's 4,002. Over the sample PASS went from −30.79% to −55.05% excess return
+  (−13.47% without 엠앤씨 and 인제니아).
+
+**How a filing is read.** Tables are read as tables, not as a stream of text: `<TR>`
+rows and `<TD>`/`<TE>` cells with ROWSPAN and COLSPAN resolved into a grid (`_grid`).
+A token-stream parser came first, and reading 230 of 255 deals was its ceiling. It
+dropped empty cells, so continuation lines passed for rows, a missing 합계 merged two
+brokerages, and `X | 1 | X` triples became one-application rows. Every rule below was
+earned by a filing:
+- **Columns are found by their header labels** (`_roles`), wherever they sit:
+  - 청약단위, 청약건수, 청약수량;
+  - the total, whose label names its own addends: `(D=B+C)`, `(E=B+C+D)` where 균등 is
+    printed in two groups (데이원, 닷밀), `(F=C+E)` (엠앤씨 키움);
+  - each addend by its letter, else the last column of its group. 큐리옥스's 비례 total
+    is `최종비례배정수량(g=e+f)`.
+
+  Whether an addend is 균등 or 비례 comes from the **group header** above it, not the
+  leaf: 데이원 labels its 비례 column `균등배정수량(D)` under `비례방식`. Labels survive
+  line breaks (`청약` / `건수`, 채비 KB), misspellings (`쳥악건수`, 비아이매트릭스) and a
+  missing parenthesis (`균등배정수량C)`, 전진건설로봇).
+- **A row is proven by its own arithmetic:** total = Σ addends, **exactly**. A unit can
+  span several grid lines (닷밀 puts 313 비례 shares on a second line); spanned cells are
+  one cell, so nothing counts twice. The main line alone is tried first (래블업's
+  sub-lines split a 균등 total the main line already carries). A row that doesn't add up
+  is dropped and counted (`rejected`), never guessed.
+- **청약수량 is 단위 × 건수, by definition.** The printed figure is only classified:
+  - `full`;
+  - `half_net`: NH prints 단위 × 건수 ÷ 2 − 균등, the 증거금 basis left after 균등 (루미르,
+    유진테크놀로지, 코스모 NH, LGCNS NH);
+  - `typo`: 위너스 printed 50,472,000 for 42,000 × 10,187, exactly the gap to its
+    summary.
+- **Only the body counts.** A 정정 filing opens with 정정 전/후 copies of its tables
+  before the `<COVER>`; 유라클 had three of everything.
+- **A table can come in two halves.** 큐리옥스 prints 균등 in one table and 비례 plus the
+  total in the next, with the same rows. A table with no total column is joined to the
+  next one, row for row.
+- **Brokerage headings.** A table's brokerage is the closest heading since the
+  previous allocation table, caption tables included: `[삼성증권]`, then `(단위: 주)`,
+  then the table (엠앤씨). Forms seen:
+  - `[한국투자증권]`, which wins anywhere on a line (`※ …배정방식별 배정현황[KB증권]`,
+    세나);
+  - `1) 대신증권(주)- …`;
+  - `2) (주)아이엠증권`.
+
+  Prose notes like `주1) …(주)는` are skipped. Hangul spellings map to 38's Latin ones
+  (케이비→KB, 엔에이치→NH, 디비→DB …). Only an unnamed lone table is assumed to be
+  38's brokerage.
+- **The filing must reconcile with itself** (`net_returns.reconcile`):
+  - **Against the summary.** The tables' 청약수량 must come to 80–100.1% of the
+    summary's in "3. 청약 및 배정현황". The summary's columns are found by label too.
+    - Under 100%: a table left unread, which costs only its own rows.
+    - Over: rows that shouldn't exist.
+    - The filer's own 합계 may count NH at its half-net figure (LGCNS: exact that way),
+      so either total may match.
+  - **Allotted shares** may fall short of 최종배정, because 잔여주 and 실권주 go to the
+    인수인, but must never exceed it.
+  - **The summary's 금액 is a second witness** (`summary_qty`), priced at the full or
+    the 50% 증거금 price:
+    - 바이오비쥬: printed 884,413,080, 금액 = 884,143,080 × 9,100 ÷ 2, which is what its
+      tables add up to;
+    - 이지스: the whole row shifted one cell.
+  - **A summary whose 청약 equals its 배정 is a copied column** (신성에스티, 필에너지,
+    엑셀세라퓨틱스). So is a 금액 computed from it. Those deals are checked by 청약건수
+    instead, plus 38's ratio within 15%.
+- **The 청약한도 comes from the 투자설명서, not from 38** (`parse_limits`,
+  `prospectus_limit`; `limit_source` `prospectus`). The backtest uses each
+  brokerage's 100% tier, at the brokerage offering the most. See below for what 38
+  got wrong.
+- **Which row.** The exact 청약 amount at that limit; 252 of 255 deals have one.
+  Where 38's figure is the fallback (no 투자설명서 read), its high end first, then
+  its low end: 38's high end assumes a 20% upsizing that usually didn't happen.
+- **Otherwise, interpolate** (`dart_interp`) between the rows either side, and only
+  when both give the same 비례 rate per share. Nobody applied at exactly that
+  amount: 인제니아 (undersubscribed 3:1, a flat 0.2635 비례 per share across the
+  whole ladder), 케이뱅크 and 에코프로머티리얼즈 (large KOSPI limits).
+  - Leave-one-out over 236 exact deals: median error 1.5%, within 1% on every allocation of 50 shares or more
+    (about a share at most there).
+  - One neighbour is never enough: a nearby unit once read 44주 for a 420,000주
+    "limit" that was 38's share count.
+
+Expected shares per application are the row's 균등 and 비례 totals ÷ 청약건수. That's
+exact in expectation, lottery top-ups included.
+
+**Why 38 and the filing disagree.** It's a difference in source, not a parse error. 23
+deals differ by more than 2%, and the filing is used for all of them:
+- **Announced vs final.** 38 reports the ratio announced at close; the filing reports
+  the final one, after 중복·부적격 청약 were voided. Both are public: for 빅웨이브로보틱스
+  dealsite reported 1375.34 (= 38), and alphasquare 1307.78 from 248,338건 (= filing).
+- **KOSPI denominator.** On (유가) listings 38's ratio is exactly ×0.833 the filing's
+  (티엠씨 1305.46 / 1566.56, 명인제약, 대한조선, 더본코리아, 산일전기 …). 38 divides by a
+  retail pool at 30% of the offering where the actual allotment was 25%.
+- **38 errors.** 로킷헬스케어: 38 80.44, filing 40.15; press reported "80 대 1" alongside
+  SK 33.81 and KB 97.67. It looks like 38 published the 비례 ratio in its 통합 field.
+- **Ratio comparisons use the 일반 allotment as the denominator.** The tables' own
+  totals leave out 잔여주 and 실권주, which once made 아이씨티케이 read 1899.67 against a
+  reported 1,107.95.
+
+Coverage at 2026-11-12: all 255 deals, 252 exact and 3 interpolated. The two REITs stay
+skipped: their filings carry no allocation table. A new layout gets a test in
+`tests/test_dart.py` first, and it must leave reconciliation passing. Changing the
+parser means diffing every deal's allocation before and after; only the deals you
+meant to move should move.
+
+### 투자설명서 — the 청약한도 each brokerage actually offered
+
+`parse_limits()` reads a deal's final 투자설명서 (`kind=dart.PROSPECTUS`, the newest
+non-예비 one filed in the 60 days before the 청약). It parses the '일반청약자
+배정물량, 최고청약한도' table and the notes after it, and returns each brokerage's
+tiers and its 100% base. 38 copies these figures by hand, and the audit found that
+it is not one tier:
+
+| 38's figure vs the 100% tier | deals |
+|---|---|
+| its low end (38's high end is an upsizing that did not happen) | 207 |
+| half of it (38 shows the 50% tier: 한투, 삼성, IBK) | 19 |
+| double or triple (38 shows 200%/300%: 대신, 신영) | 5 |
+| another figure or another brokerage | 19 |
+
+Among the last group:
+- **필에너지:** 미래 was shown 삼성's 5,000~6,000; it was 29,500.
+- **케이엔알:** DB was shown NH's 150% tier; DB was 26,300 for everyone.
+- **LS머트리얼즈:** 키움 6,000~7,000 against a real 100,000, where the filing has 7,586
+  applications.
+- **엠디바이스:** 18,900 was not even a valid amount (1,000주 steps).
+- **동인기연:** 38 kept the pre-정정 15,000~18,000; it was 12,000.
+
+Wordings, each from a filing (one test per form in `tests/test_dart.py`):
+- `25,000주 (100%)`, `18,000 주 (온라인, 100%)`: 대신, 미래, NH, 한투, 유안타;
+- tier tables, `일반 청약자격 | 100% | 15,000주`: 삼성;
+- `일반(100%)그룹의 청약한도: 7,000주`, `일반고객(100%)의 청약한도 : 15,000주`: 신영, IBK;
+- no percentage, `일반고객의 청약한도 : 10,000주` or `일반청약자 최고청약한도는 20,000주
+  이나`: 하나, BNK;
+- one limit for everyone, only the table's figure: DB, 하이, 키움, BNK.
+
+Rules that came from failures:
+- **The table's own figure is not the base when tiers are listed.** NH prints its 300%
+  there, and 신영 its 300%.
+- **Inline tags split numbers** (`15, 0 00주 (10 0%)`, 에스오에스랩), so spaces inside
+  digits are removed. The window is matched as one string, and a tier belongs to the
+  brokerage named last before it.
+- **A row labelled `일반청약자`** takes its brokerage from the caption above (로킷 SK).
+- **A missing 100% line is derived** from another tier (200% halved), labelled
+  `prospectus_derived`. No deal needs it today.
+- **The best brokerage is chosen only when every brokerage was read.** Otherwise
+  only 38's own is trusted, since the unread one may be the best.
+- **Ranged limits.** 27 final prospectuses keep a pre-pricing range. The filing's rows
+  decide which end applied: applicants pile up at each tier's maximum, so the end
+  with more applications across its tier amounts wins.
+  - 씨케이솔루션: 12,355 / 1,994 / 1,695 at the high end's 100/150/200% amounts,
+    against 1,055 / 144 / 53 at the low end's.
+  - 두산로보틱스: 559 at the high end's 162,000 against 11 at 136,000.
+
+  Five deals take the high end: 씨케이, 두산, 더본코리아, 산일전기, 달바글로벌.
+  Their summed allotments point to the low end, so the rows are what decides
+  there; why the brokerages ran the higher limits isn't explained in either
+  filing.
+  - With no rows at either end, the 일반 allotment against the summed brokerage
+    allotments decides.
+
+Checks on the result (2026-11-12):
+- **Independent anchors:** the six limits verified earlier on the brokerages' own
+  pages (동원파츠, 래블업, 인텔리빅스, 바로팜, 티앤이코리아, 멜콘) all match exactly.
+- **Top tier mistaken for the base:** checked by looking for a filing whose largest
+  amount equals the base at a brokerage that has tiers. One case: 비아이매트릭스 IBK.
+  Its prospectus states 100% = 30,000 and 200% = 60,000, yet nobody applied above
+  30,000. It is unresolved; the prospectus figure is kept.
+- **Only the base read:** where higher tiers went unread (하나, 키움), the filing's
+  largest amount is a clean 1.5×, 2× or 3× of the base, as it should be.
+
+The rows themselves are the main check: 252 of 255 deals have a row
+at the chosen amount, often among the busiest. 케이엔알 26,300 had 18,333 applications,
+and 시큐레터 16,000 had 21,077. The largest amount is usually the top tier at that base
+(현대힘스 216,000 = 2 × 108,000).
 
 `net_returns.py` caches detail pages under `state/cache/` — it needs one fetch per deal, so
 the first full run makes ~240 requests. Never drop the cache or the 1s delay. A cached
@@ -280,15 +490,16 @@ outcome to learn from. Getting this wrong invalidates everything downstream.
 
 What the harness established, and what you should not undo:
 
-- **Hard-bin comparables were the worst model tested** (MAE 64.3만 vs ~45 for
-  everything else, rank corr 0.285 vs 0.385 shipped; n=176 scored, 2026-11-12).
+- **Hard-bin comparables were the worst model tested** (MAE 61.8만 vs ~45 for
+  everything else, rank corr 0.277 vs 0.397 shipped; n=177 scored, 2026-11-12,
+  on DART-read allocations at 투자설명서 limits).
   Smooth kernel weighting beat it because it uses every past deal instead of a
   handful in-or-out. The figures were 62.2/~41 and 0.307/0.460 at an earlier
   build; that drop is not recent deals being mis-ranked — targets listed before
   2026-10-01 score 0.372 and the 14 since score 0.367.
 - **No third feature beat the shipped model on either metric.** 3개월+ tenor share,
   band position, and recency decay all scored worse on both MAE and rank correlation
-  (2026-11-12: shipped 44.4만 / 0.385; tenor3 49.3만 / 0.300, band position 45.9만 / 0.276).
+  (2026-11-12: shipped 45.2만 / 0.397; tenor3 49.5만 / 0.312, band position 46.7만 / 0.295).
   Against their own h=1.0 base the picture has flipped between rebuilds — tenor3
   raised rho at one build and only matched it at the next — which is exactly the
   noise the "materially beats" bar exists to filter. Two features is not laziness; it is the
@@ -298,8 +509,8 @@ What the harness established, and what you should not undo:
   sweep and only rank correlation moved, monotonically — so the peak is the edge of a
   noisy curve. 0.6 rests on ~61 effective neighbours instead of ~31.
 - **The model is only calibrated at 기관경쟁률 >= 600** (`CALIBRATED_MIN_INST`). There
-  bias is +2.5만 and terciles are monotonic. Below 300 bias is +178.9만 — weak demand
-  means a huge allocation, and 28 examples cannot pin that tail down. Never quote an
+  bias is −0.4만 (n=143, 2026-11-12). Below 300 bias is +262.6만 — weak demand
+  means a huge allocation, and 37 examples cannot pin that tail down. Never quote an
   EV for a low-competition deal (see below: the outputs no longer print one).
 - Always show the bootstrap CI. For 니어스랩 the EV was -5,456원 against a CI of
   ±100,000원; the point estimate alone would have been a lie of precision.
@@ -310,12 +521,12 @@ What the harness established, and what you should not undo:
   walk-forward held 80% of outcomes at >= 600 against a nominal 80% — 86% where
   확약 >= 2%, but only 52% where it is below 1% (next bullet but one).
 - **Below 600 the EV and 흑자확률 are withheld, not just flagged.** There 결과 범위
-  held 61% and 흑자확률 ran 75% against 66% realised. Output shows the range and a
+  held 56% and 흑자확률 ran 73% against 52% realised (n=52). Output shows the range and a
   warning only. Do not restore the point estimate for low-demand deals.
 - **The same applies at >= 600 when 확약 is below 1%** (`CALIBRATED_MIN_LOCK`). Over
-  23 such deals 결과 범위 held 52% (10 outcomes below p10), 흑자확률 read 75% against
-  43% realised, and bias was −15.4만. Retail often stays away from them — 이에스티
-  was allocated 380주 against a median forecast of 16 — so analogues understate the
+  23 such deals 결과 범위 held 52% (9 outcomes below p10), and 흑자확률 read 75% against
+  43% realised. Retail often stays away from them — 이에스티
+  was allocated 321주 비례 against a median forecast of 16 — so analogues understate the
   allocation. These deals cannot reach GO (GO needs 확약 >= `watch_lockup_pct`), so
   only the report's WATCH rows are affected. The 1% cut was chosen on the same
   holdout it was measured on, and 1~2% (n=6) was left alone for lack of data.
