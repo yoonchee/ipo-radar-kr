@@ -181,6 +181,17 @@ sees this bonus at all. Checking a tenor rule means scoring the detail-page cach
 
 Thresholds live in `config.json` and were set from `backtest.py`, not from intuition.
 
+**`watch_lockup_pct` is 2%, not 5%** (2026-11-13). It is the bar for 확약's +1, which
+is what lifts a 600:1+ deal priced at the band top from 5 to GO's 6. Among the WATCH
+deals at 5%, 확약 split them cleanly at 600:1+: 2–5% was 29 deals, 100% net-win and
++11.6% a year, in both halves of the sample (19 and 10). Under 2% it was 31 deals,
+45% and −3.1%. That beats GO's own 5–10% deals (92%, +9.4%). The 2% line also matches
+the forecast's calibration break (결과 범위 held 86% at 확약 >= 2%, 52% under 1%).
+It was found on the same sample it was measured on, so expect losses the 29 didn't
+show. The tenor bonus's gate moved with it; 0.87% (the case that gate exists for)
+stays excluded.
+
+
 `calendar_sync.py` creates two Google Calendar events per GO — 청약 on the last
 subscription day at 10:00 alerting at 10:00 (brokerages may refuse an earlier
 청약), and 매도 on 상장일 at 09:00 alerting at 08:30, when 장전 동시호가 opens and
@@ -300,16 +311,17 @@ disagree about the headline. Subscribing at the 100% 청약한도 to *every* dea
 over the sample (n=255, rebuilt 2026-11-12) despite 84% of deals rising at the open,
 because 증거금 (50% of 청약한도 × 확정공모가) sits idle from 청약일 to 환불일, and because
 weak deals — the ones nobody wants — fill you with hundreds of shares right before they
-fall. GO earns +13.08% excess return; PASS earns −55.05%.
+fall. GO earns +12.89% excess return; PASS earns −55.05%.
 
 Two consequences, both already encoded:
 
-- **WATCH does not notify.** It measured +3.05% over 78 deals. Like every excess return
-  here that is annualised on the capital committed and *net of* the 3% opportunity
-  cost, so WATCH beats a CMA by that much — worth subscribing with idle cash, not an
-  interruption. One lucky deal carries much of it: 이에스티 (630:1, 확약 0.24%) drew
-  321주 비례 at 18,000 when the forecast expected 16, and happened to open +28%.
-  Without it WATCH is +2.30% over 77 deals, against GO's +13%.
+- **WATCH does not notify, because it is a coin flip.** In the backtest it is 49 deals at
+  +1.53% excess return, the figure annualised on the capital committed and *net of*
+  the 3% opportunity cost. But four of them (세미파이브, 명인제약, 삼양컴텍, 산일전기)
+  are GO on the live screen, through the tenor bonus `backtest.py` can't see. Without
+  them WATCH is 45 deals at 49% net-win and −89만, with tails like 토모큐브 (−125만)
+  and 이에스티 (+110만). Its good part, 600:1+ with 확약 2–5%, is GO since the
+  threshold change above.
   `run.py` raises a banner only for a newly-GO deal. Don't "fix" this by restoring a summary
   notification.
 - **배정 is read from DART, computed only where it can't be.** 38 publishes no

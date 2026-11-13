@@ -419,12 +419,11 @@ def main():
             {"verdict": "WATCH", "name": r["rec"]["name"], "seen": run_date}
         )
 
-    # Only a new GO is worth interrupting for. net_returns.py measured WATCH at
-    # +3.05% a year over the 3% the cash would earn idle (+2.30% without one
-    # lucky outlier, 이에스티), against GO's +13% (2026-11-12). That beats a
-    # CMA -- WATCH is a reasonable subscription for idle cash -- but it averages
-    # ~5.6만 a deal and is noisy, so it is not worth an interruption. WATCH
-    # stays visible in the report and never raises a banner.
+    # Only a new GO is worth interrupting for. Since watch_lockup_pct went to
+    # 2% (2026-11-13) WATCH is what is left: 45 deals at a 49% net-win rate and
+    # -89만 as the live screen scores them, a coin flip with 125만 tails, against
+    # GO's +12.9% a year. WATCH stays visible in the report and never raises a
+    # banner.
     #
     # A GO is recorded in seen.json ONLY once its banner actually posted. The
     # entry is the record of a delivered alert, not of a deal we noticed: if

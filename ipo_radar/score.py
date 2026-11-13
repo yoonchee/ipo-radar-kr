@@ -18,7 +18,7 @@ DEFAULT_CONFIG = {
     "watch_institutional_ratio": 300.0,
     # 의무보유확약 (share of institutional demand voluntarily locked up)
     "go_lockup_pct": 10.0,
-    "watch_lockup_pct": 5.0,
+    "watch_lockup_pct": 2.0,
     # Share of locked-up stock at 3-month or longer tenor.
     "strong_long_tenor_share": 0.30,
     # Pricing above the indicative band is the single cleanest demand signal.

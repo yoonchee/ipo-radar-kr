@@ -87,7 +87,7 @@ Three signals, all knowable *before* the subscription window opens:
 3. **의무보유확약** — the share of institutional allocation voluntarily locked up,
    weighted toward 3/6-month tenors. 15일 확약 unlocks before you'd care; 3개월+
    keeps that stock off the tape on listing day. The long-tenor bonus counts only
-   when 확약 itself is at least 5% — a long share of a near-zero 확약 holds nothing back.
+   when 확약 itself is at least 2% — a long share of a near-zero 확약 holds nothing back.
 
 Verdicts: **GO** (score ≥ 6, no blockers) · **WATCH** (≥ 3) · **PASS** · **PENDING**
 (수요예측 not published yet) · **EXCLUDED** (스팩/코넥스).
@@ -216,8 +216,8 @@ Over **257 non-SPAC deals, 2023-06 → 2026-11**:
 
 | Verdict | n | win rate | mean | median |
 |---|---:|---:|---:|---:|
-| GO | 120 | 99% | +134% | +114% |
-| WATCH | 78 | 78% | +60% | +38% |
+| GO | 149 | 99% | +127% | +110% |
+| WATCH | 49 | 65% | +38% | +27% |
 | PASS | 59 | 58% | +23% | +4% |
 | *(subscribe to everything)* | 257 | 83% | +86% | +69% |
 
@@ -243,7 +243,7 @@ No deal in the sample priced strictly inside its band: every one off the top or 
 was repriced *below* it. Exactly at the bottom is the weaker signal of the two.
 
 `go_institutional_ratio` is set to **600** rather than 800: at 600 the screen takes
-120 deals at a 99% win rate instead of 97 at 100%, at a median of +114% against +123%.
+149 deals at a 99% win rate instead of 122 at 100%, at a median of +110% against +115%.
 Since the binding constraint is 청약한도 per deal rather than the number of deals,
 more shots on goal is the better trade.
 
@@ -279,8 +279,8 @@ Over 255 deals (2023-06 to 2026-11), at each deal's 100% 청약한도 from its
 
 | Bucket | n | 순손익 | 초과수익률¹ | 평균 배정 |
 |---|---:|---:|---:|---:|
-| **GO** | 120 | **+1,836만** | **+13.08%** | 17주 |
-| WATCH | 78 | +438만 | +3.05% | 35주 |
+| **GO** | 149 | **+2,087만** | **+12.89%** | 16주 |
+| WATCH | 49 | +186만 | +1.53% | 49주 |
 | PASS | 57 | −8,357만 | −55.05% | 1,399주 |
 | *전 종목* | 255 | **−6,084만** | −13.96% | 331주 |
 
@@ -292,10 +292,11 @@ nobody wanted those deals, so you were filled with thousands of shares, and they
 엠앤씨솔루션 (비례 5:1) filled 6,807 shares at −11% — a 4,784만 loss on its own —
 and 노머스 4,358 shares at −29%, 3,795만.
 
-WATCH earns +3.05% a year *on top of* the 3% the cash would earn idle (+2.30% without
-one lucky deal, 이에스티): better than a CMA, so worth subscribing with cash that is
-idle anyway. It averages ~5.6만 a deal against GO's +13%, though, so it shows in the
-report and never raises an alert.
+**WATCH is the coin-flip bucket**, and does not alert. Its +1.53% a year comes from
+four deals the live screen scores GO (their 3개월+ 확약 bonus, which `backtest.py`
+can't see); without them WATCH is 45 deals, a 49% win rate and −89만. What used to
+make WATCH look worthwhile — 기관경쟁률 ≥ 600 with 확약 of 2–5% — is now GO: those 29
+deals won 100% of the time at +11.6% a year, in both halves of the sample.
 
 ### What is measured vs assumed
 
