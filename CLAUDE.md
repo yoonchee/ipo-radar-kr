@@ -271,7 +271,7 @@ Two things to keep in mind before re-fitting anything:
   `backtest.py` cuts the sample by that date (`REGIME_START`), not by page count: the
   old `--pages 18` was a sliding window that had let 15 pre-regime deals in, and would
   have started dropping valid ones as new listings pushed them off the last page.
-  The ~86% baseline win rate is a property of that regime. If the rules change, the
+  The ~83% baseline win rate is a property of that regime. If the rules change, the
   thresholds need re-deriving, and the historical numbers stop being a guide.
 - **A high baseline flatters any screen.** Most deals in the sample were profitable at the
   open, so the screen's job is avoiding the bad tail, not finding rare winners. Judge changes

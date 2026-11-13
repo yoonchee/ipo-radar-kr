@@ -209,38 +209,38 @@ It persists results to `state/backtest/`, dated plus a `latest` copy of each:
 `state/` is gitignored, so these are local artifacts. Commit one deliberately if you
 want a versioned record of what justified a threshold change.
 
-Over **243 non-SPAC deals, 2023-03 → 2026-08**:
+Over **257 non-SPAC deals, 2023-06 → 2026-11**:
 
 | Verdict | n | win rate | mean | median |
 |---|---:|---:|---:|---:|
-| GO | 117 | 99% | +131% | +110% |
-| WATCH | 70 | 80% | +59% | +38% |
-| PASS | 56 | 64% | +23% | +8% |
-| *(subscribe to everything)* | 243 | 86% | +85% | +66% |
+| GO | 120 | 99% | +134% | +114% |
+| WATCH | 78 | 78% | +60% | +38% |
+| PASS | 59 | 58% | +23% | +4% |
+| *(subscribe to everything)* | 257 | 83% | +86% | +69% |
 
 Each signal is monotonic on its own:
 
 | 기관경쟁률 | n | win rate | median |
 |---|---:|---:|---:|
-| 0–100 | 18 | 72% | +9% |
-| 100–300 | 28 | 64% | +8% |
+| 0–100 | 16 | 56% | +2% |
+| 100–300 | 34 | 59% | +8% |
 | 300–600 | 25 | 72% | +30% |
-| 600–800 | 28 | 96% | +73% |
-| 800–1200 | 96 | 89% | +81% |
-| 1200+ | 48 | 98% | +101% |
+| 600–800 | 32 | 91% | +71% |
+| 800–1200 | 107 | 90% | +83% |
+| 1200+ | 43 | 98% | +116% |
 
 | 확정공모가 vs 밴드 | n | win rate | median |
 |---|---:|---:|---:|
-| above band | 88 | 90% | +75% |
-| at band top | 113 | 89% | +78% |
-| **at band bottom** | 18 | **50%** | **+1%** |
-| below band (repriced down) | 23 | 74% | +17% |
+| above band | 85 | 89% | +74% |
+| at band top | 127 | 88% | +84% |
+| **at band bottom** | 21 | **43%** | **+0%** |
+| below band (repriced down) | 24 | 71% | +15% |
 
 No deal in the sample priced strictly inside its band: every one off the top or bottom
 was repriced *below* it. Exactly at the bottom is the weaker signal of the two.
 
 `go_institutional_ratio` is set to **600** rather than 800: at 600 the screen takes
-117 deals at a 99% win rate instead of 94 at 100%, with near-identical median return.
+120 deals at a 99% win rate instead of 97 at 100%, at a median of +114% against +123%.
 Since the binding constraint is 청약한도 per deal rather than the number of deals,
 more shots on goal is the better trade.
 
@@ -248,9 +248,9 @@ more shots on goal is the better trade.
 
 - **Regime dependence.** In June 2023 Korea widened the listing-day opening range to
   60–400% of 공모가. Every deal in this sample listed under those rules, and the
-  +85% baseline reflects that. If the rules tighten, the base rate moves and the
+  +86% baseline reflects that. If the rules tighten, the base rate moves and the
   thresholds should be re-derived.
-- **A high baseline flatters everything.** 86% of *all* deals were profitable at the
+- **A high baseline flatters everything.** 83% of *all* deals were profitable at the
   open. The screen's value is avoiding the bad tail, not finding rare winners.
 - **These percentages are not money.** 배정 is pro-rata, so a +150% deal where you were
   filled for three shares can be worth less in cash than a mediocre one where you were
@@ -362,21 +362,22 @@ on disk, so a stale one quietly scores new deals against an aging comparison set
 analogue counts only if its **listing** date precedes the target's *subscription*
 date. A deal that had subscribed but not yet listed has no outcome to learn from.
 
-Scored over the 160 deals every variant could predict (`python3 evaluate.py`):
+Scored over the 177 deals every variant could predict (`python3 evaluate.py`,
+2026-11-13):
 
 | variant | MAE(만) | rank corr |
 |---|---:|---:|
-| hard-bin comparables *(the original)* | 62.2 | 0.307 |
-| global median | 43.2 | 0.360 |
-| **kernel, 2 features, h=0.6 — shipped** | **40.6** | **0.460** |
-| kernel + 3개월 tenor share | 44.4 | 0.418 |
-| kernel + band position | 42.0 | 0.364 |
-| kernel + recency decay | 41.8 | 0.315 |
+| hard-bin comparables *(the original)* | 61.8 | 0.277 |
+| global median | 48.3 | 0.229 |
+| **kernel, 2 features, h=0.6 — shipped** | **45.2** | **0.397** |
+| kernel + 3개월 tenor share | 49.5 | 0.312 |
+| kernel + band position | 46.7 | 0.295 |
+| kernel + recency decay | 47.3 | 0.285 |
 
-Hard bins were the worst thing tested — smooth weighting wins because it uses all 234
-deals rather than the 43 that fall inside a bin. No third feature beat the shipped
-model on either metric. Two features is not laziness, it is the measured optimum at
-n=234; a third needs a walk-forward win, not a plausible story.
+Hard bins were the worst thing tested — smooth weighting wins because it uses every
+past deal rather than the handful that fall inside a bin. No third feature beat the
+shipped model on either metric. Two features is not laziness, it is the measured
+optimum at n=255; a third needs a walk-forward win, not a plausible story.
 
 The bandwidth is deliberately *not* the argmax. MAE is flat across the whole sweep and
 only rank correlation moves, monotonically, so the peak is the edge of a noisy curve —
@@ -384,12 +385,15 @@ only rank correlation moves, monotonically, so the peak is the edge of a noisy c
 
 **Read this before trusting an EV:**
 
-- **It is only calibrated at 기관경쟁률 ≥ 600.** There the bias is +2.5만 and terciles
-  are monotonic. Below 300 the bias is +178.9만 — weak demand means a huge allocation,
-  and 28 historical examples cannot pin that tail down. Walk-forward, 결과 범위 held
-  only 61% of outcomes there and 흑자확률 ran 75% against 66% realised; 엘리스그룹
-  (+130만 forecast, −97만 actual) and 인제니아 (+168만, −1,315만) are what that looks
-  like. So below 600 the report shows the range alone and withholds EV and 흑자확률.
+- **It is only calibrated at 기관경쟁률 ≥ 600.** There the bias is −0.4만 (n=143) and
+  terciles are monotonic. Below 300 the bias is +262.6만 — weak demand means a huge
+  allocation, and 37 historical examples cannot pin that tail down. Walk-forward below
+  600, 결과 범위 held only 56% of outcomes and 흑자확률 ran 73% against 52% realised;
+  엘리스그룹 (+112만 forecast, −81만 actual) and 인제니아 (+71만, −1,657만) are what that
+  looks like. So below 600 the report shows the range alone and withholds EV and 흑자확률.
+- **The same holds at ≥ 600 when 의무보유확약 is under 1%.** Over 23 such deals 결과 범위
+  held 52% and 흑자확률 read 75% against 43% realised: retail often stays away, so the
+  allocation runs far above the analogues'. EV and 흑자확률 are withheld there too.
 - **The interval is the point.** For 니어스랩 the EV was −5,456원 against a CI of
   roughly ±100,000원. The point estimate alone would be a lie of precision. Show both
   ranges, and never label the bootstrap one as where the outcome will land.
