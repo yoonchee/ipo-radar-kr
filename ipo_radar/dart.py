@@ -107,6 +107,25 @@ def norm_name(name: Optional[str]) -> str:
 
 REPORT = "증권발행실적보고서"
 PROSPECTUS = "투자설명서"
+# The 증권신고서 carries the same 청약한도 section as the 투자설명서 and is filed
+# weeks earlier. DART's list does not index the 예비투자설명서 at all, so this
+# is what the live screen reads until the 투자설명서 is filed.
+REGISTRATION = "증권신고서(지분증권)"
+
+
+def _is_kind(report_nm: str, kind: str) -> bool:
+    """'투자설명서', '[기재정정]증권신고서(지분증권)', '[발행조건확정]…' -- the
+    filing itself, with an optional bracketed tag. Not an attachment-only
+    filing ('[첨부추가]…', '[첨부정정]…'), a 예비 version, or a notice that
+    names one ('효력발생안내( 2026.10.2. 제출 증권신고서(지분증권) )').
+    """
+    m = re.match(r"^(?:\[([^\]]*)\])?\s*(.*)$", report_nm.strip())
+    tag, rest = m.group(1) or "", m.group(2)
+    if "첨부" in tag:
+        return False
+    if kind == REPORT:
+        return rest.startswith(REPORT)
+    return rest == kind
 
 
 def report_xml(ticker: str, bgn: str, end: str, key: str, name: Optional[str] = None,
@@ -183,8 +202,7 @@ def _report_for_corp(corp: str, bgn: str, end: str, key: str, kind: str = REPORT
             return None
         with open(list_path, "w", encoding="utf-8") as fh:
             json.dump(listing, fh, ensure_ascii=False)
-    filings = [f for f in listing.get("list", []) if kind in f.get("report_nm", "")
-               and "예비" not in f.get("report_nm", "")]
+    filings = [f for f in listing.get("list", []) if _is_kind(f.get("report_nm", ""), kind)]
     if not filings:
         LAST_ERROR = "%s~%s 에 %s 없음" % (bgn, end, kind)
         return None
@@ -832,31 +850,42 @@ def prospectus_limit(limits: Dict[str, Dict], alloc: Optional[float],
 
 
 def live_limits(rec: Dict, key: Optional[str]) -> Tuple[Optional[Dict[str, Dict]], Optional[str]]:
-    """The 투자설명서's per-brokerage limits for a live deal, or (None, why not).
+    """Per-brokerage limits for a live deal from its filings, or (None, why not).
 
     The newest non-예비 투자설명서 filed from 60 days before the 청약 until
-    its last day -- a post-pricing 정정 replaces the first one. Never raises:
-    the daily run must finish whatever DART does, and the caller falls back
-    to 38 for every brokerage this leaves unread.
+    its last day -- a post-pricing 정정 replaces the first one. Until it is
+    filed, the newest 증권신고서 (정정 included), which prints the same
+    청약한도 section, usually as pre-pricing ranges. Each brokerage's entry
+    says which in ``filing``. Never raises: the daily run must finish
+    whatever DART does, and the caller falls back to 38 for every brokerage
+    this leaves unread.
     """
     if not key:
         return None, "DART 키 없음"
     start = rec.get("subscription_start")
     if not start:
         return None, "청약일 미정"
-    try:
-        s0 = [int(x) for x in start.split("-")]
-        bgn = (datetime.date(*s0) - datetime.timedelta(days=60)).isoformat()
-        xml = report_xml(rec.get("ticker") or "", bgn, rec.get("subscription_end") or start, key,
-                         name=rec.get("name"), kind=PROSPECTUS)
-    except Exception as exc:   # network, zip, JSON: never the URL, which carries the key
-        return None, "DART 오류 (%s)" % type(exc).__name__
-    if not xml:
-        return None, LAST_ERROR or "투자설명서 없음"
-    try:
-        limits = parse_limits(xml)
-    except Exception as exc:   # a layout the parser has not met must not stop the run
-        return None, "투자설명서 파싱 오류 (%s)" % type(exc).__name__
-    if not limits:
-        return None, "투자설명서에서 청약한도 표를 못 읽음"
-    return limits, None
+    s0 = [int(x) for x in start.split("-")]
+    bgn = (datetime.date(*s0) - datetime.timedelta(days=60)).isoformat()
+    why = None
+    for kind in (PROSPECTUS, REGISTRATION):
+        try:
+            xml = report_xml(rec.get("ticker") or "", bgn, rec.get("subscription_end") or start, key,
+                             name=rec.get("name"), kind=kind)
+        except Exception as exc:   # network, zip, JSON: never the URL, which carries the key
+            return None, "DART 오류 (%s)" % type(exc).__name__
+        if not xml:
+            why = why or LAST_ERROR or "투자설명서 없음"
+            continue
+        try:
+            limits = parse_limits(xml)
+        except Exception as exc:   # a layout the parser has not met must not stop the run
+            why = why or "%s 파싱 오류 (%s)" % (kind, type(exc).__name__)
+            continue
+        if not limits:
+            why = why or "%s에서 청약한도 표를 못 읽음" % kind
+            continue
+        for v in limits.values():
+            v["filing"] = kind
+        return limits, None
+    return None, why

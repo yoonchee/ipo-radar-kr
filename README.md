@@ -133,7 +133,8 @@ config file nor in the launchd plist.
 its low end is not even one tier: against the 투자설명서 of 255 deals it was the
 100% tier on 207, the 50% tier on 19 (한투, 삼성, IBK), 200–300% on 5, and another
 brokerage's figure on several. So for a GO or WATCH deal the screen reads the
-deal's final 투자설명서 from DART, which prints every brokerage's tiers, and
+deal's final 투자설명서 from DART (before it is filed, the 증권신고서, which has the
+same section as pre-pricing ranges), which prints every brokerage's tiers, and
 applies yours as a percentage of that brokerage's own 100% base, in
 `config.local.json`:
 
@@ -151,6 +152,8 @@ to a separate key, a multiple of 38's low end:
 ```
 
 That fallback is labelled in every output, since 38's low end may be another tier.
+If a 정정 changes your 청약한도 or the 확정공모가 after a GO alert, a follow-up email
+says what moved, once per change, until the 청약 closes.
 The backtest uses neither — it measures the screen at each brokerage's 100% tier,
 not your account.
 
@@ -289,8 +292,10 @@ nobody wanted those deals, so you were filled with thousands of shares, and they
 엠앤씨솔루션 (비례 5:1) filled 6,807 shares at −11% — a 4,784만 loss on its own —
 and 노머스 4,358 shares at −29%, 3,795만.
 
-This is also why WATCH does not notify: +3.05%, and +2.30% without one lucky deal
-(이에스티), is small next to GO's +13% before the friction of moving funds.
+WATCH earns +3.05% a year *on top of* the 3% the cash would earn idle (+2.30% without
+one lucky deal, 이에스티): better than a CMA, so worth subscribing with cash that is
+idle anyway. It averages ~5.6만 a deal against GO's +13%, though, so it shows in the
+report and never raises an alert.
 
 ### What is measured vs assumed
 

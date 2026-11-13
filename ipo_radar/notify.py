@@ -330,3 +330,41 @@ def notify_go(rec, verdict=None, report_path=None, cfg=None, fc=None):
         banner = _notify_go_banner(rec, report_path, url)
 
     return bool(emailed or banner)
+
+
+def notify_terms_change(rec, changes, report_path=None, cfg=None):
+    """Follow-up to a GO alert after a 정정 changed what it told you.
+
+    ``changes`` is [(label, before, after)]. Email first; a banner when email
+    is off or failed, so the change is never silent. True if either reached
+    you -- run.py records the new terms only then, and retries otherwise.
+    """
+    conf = dict(EMAIL_DEFAULTS)
+    if cfg:
+        conf.update(cfg)
+    url = "https://www.38.co.kr/html/fund/?o=v&no=%s" % rec["no"] if rec.get("no") else ""
+    ml = rec.get("my_limit") or {}
+    price = rec.get("final_price")
+    L = ["%s — GO 알림 이후 정정으로 바뀐 내용입니다." % (rec.get("name") or "?"), ""]
+    for label, before, after in changes:
+        L.append("%-10s %s → %s" % (label, before, after))
+    L.append("")
+    if ml.get("shares") and price:
+        L.append("투입증거금  %s원 (현재 %s주 × %s원 × 50%%)" % (
+            "{:,.0f}".format(ml["shares"] * price * 0.5), "{:,}".format(ml["shares"]), "{:,}".format(price)))
+    L += my_limit_lines(ml)
+    L.append("청약        %s ~ %s" % (rec.get("subscription_start") or "?", rec.get("subscription_end") or "?"))
+    L += ["", "캘린더 일정의 한도·금액은 처음 알림 기준입니다.", "", url, "",
+          "투자 판단과 책임은 본인에게 있습니다."]
+    emailed = False
+    if conf.get("notify_email"):
+        emailed = send_email("[공모주 정정] %s — %s" % (
+            rec.get("name") or "?", ", ".join(c[0] for c in changes) + " 변경"), "\n".join(L), conf)
+    banner = False
+    if not emailed:
+        banner = notify("공모주 정정 — %s" % (rec.get("name") or "?"),
+                        ", ".join("%s %s" % (c[0], c[2]) for c in changes),
+                        "GO 알림 이후 변경", sound="Glass", open_target=report_path,
+                        group="ipo-radar-change-%s" % rec.get("no"))
+    return emailed or banner
+

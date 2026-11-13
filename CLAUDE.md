@@ -215,8 +215,16 @@ The 투자설명서 audit (2026-11-12, 255 deals) found it the 50% tier at 한�
 multiple of 38's low end is therefore wrong on some deals at every brokerage.
 
 So the live screen reads the limit from the deal's final 투자설명서 too
-(`dart.live_limits`, for GO/WATCH deals only, in `attach_forecasts`). It is filed
-before the 청약: a median 7 days before its last day, 2 at the latest in the sample.
+(`dart.live_limits`, for GO/WATCH deals only, in `attach_forecasts`, which sets
+`my_limit` even when `dataset.json` is missing). It is filed before the 청약: a
+median 7 days before its last day, 2 at the latest in the sample. Until then the
+newest 증권신고서(지분증권) is read instead (`dart.REGISTRATION`, `filing` in
+`my_limit`): it prints the same 청약한도 section as pre-pricing ranges, and it is
+on file weeks ahead. DART's list does not index the 예비투자설명서 at all.
+`dart._is_kind` matches the filing itself, never `[첨부추가]` attachments or the
+`효력발생안내( … 증권신고서 )` notice that names one. On 2026-11-13 all 15 upcoming
+deals read this way, 10 of them from the 증권신고서; 38 showed the 50% tier at
+every 한투 and 삼성 deal among them.
 `run.py:my_limit()` then takes, per brokerage:
 - **Your tier** from `my_tier_pct` in `config.local.json` (`{"키움증권": 150}`), a
   percentage of that brokerage's own 100% base. The figure the prospectus prints for
@@ -236,6 +244,14 @@ before the 청약: a median 7 days before its last day, 2 at the latest in the s
 - the email and calendar print `투자설명서` or `38 하한 × m`;
 - they print 38's figure when it differs from the 100% base;
 - they print why the prospectus wasn't used (`limits_note`: no key, not filed yet).
+
+**A 정정 after the GO alert gets a follow-up** (`run.terms_changes`,
+`notify.notify_terms_change`). `seen.json` records the terms each alert carried:
+your brokerage and 청약한도, and the 확정공모가. Each run compares them until the 청약
+closes. A changed limit, brokerage or price sends one email, or a banner if email
+fails. A source change at the same figure (38 → 투자설명서) is not a change, and nor
+is a value that went missing for a run. The calendar event keeps the first alert's
+figures; the email says so.
 
 Disagreeing with 38 is not a parse warning: it happens on a fifth of deals.
 `backtest.py` and `net_returns.py` deliberately stay on the 100% tier (below), since
@@ -288,10 +304,12 @@ fall. GO earns +13.08% excess return; PASS earns −55.05%.
 
 Two consequences, both already encoded:
 
-- **WATCH does not notify.** It measured +3.05% over 78 deals, but one lucky deal carries
-  much of that: 이에스티 (630:1, 확약 0.24%) drew 321주 비례 at 18,000 when the forecast
-  expected 16, and happened to open +28%. Without it WATCH is +2.30% over 77 deals,
-  small next to GO's +13%.
+- **WATCH does not notify.** It measured +3.05% over 78 deals. Like every excess return
+  here that is annualised on the capital committed and *net of* the 3% opportunity
+  cost, so WATCH beats a CMA by that much — worth subscribing with idle cash, not an
+  interruption. One lucky deal carries much of it: 이에스티 (630:1, 확약 0.24%) drew
+  321주 비례 at 18,000 when the forecast expected 16, and happened to open +28%.
+  Without it WATCH is +2.30% over 77 deals, against GO's +13%.
   `run.py` raises a banner only for a newly-GO deal. Don't "fix" this by restoring a summary
   notification.
 - **배정 is read from DART, computed only where it can't be.** 38 publishes no

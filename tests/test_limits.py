@@ -126,5 +126,85 @@ class ListingCacheTest(unittest.TestCase):
             dart.report_xml, dart.parse_limits = saved
 
 
+class FilingKindTest(unittest.TestCase):
+    def test_names(self):
+        yes = [("투자설명서", dart.PROSPECTUS), ("[기재정정]투자설명서", dart.PROSPECTUS),
+               ("증권신고서(지분증권)", dart.REGISTRATION), ("[기재정정]증권신고서(지분증권)", dart.REGISTRATION),
+               ("[발행조건확정]증권신고서(지분증권)", dart.REGISTRATION),
+               ("[기재정정]증권발행실적보고서", dart.REPORT)]
+        no = [("예비투자설명서", dart.PROSPECTUS),
+              ("[첨부추가]증권신고서(지분증권)", dart.REGISTRATION),
+              ("효력발생안내( 2026.10.2. 제출 증권신고서(지분증권) )", dart.REGISTRATION),
+              ("정정신고서제출요구( 2026.09.09. 제출 증권신고서(지분증권) )", dart.REGISTRATION)]
+        for name, kind in yes:
+            self.assertTrue(dart._is_kind(name, kind), name)
+        for name, kind in no:
+            self.assertFalse(dart._is_kind(name, kind), name)
+
+    def test_registration_until_the_prospectus_is_filed(self):
+        saved = dart.report_xml, dart.parse_limits
+        try:
+            dart.report_xml = lambda *a, **k: "<x>" if k.get("kind") == dart.REGISTRATION else None
+            dart.parse_limits = lambda xml: {"삼성증권": lim((10000, 12000), {100: (10000, 12000)})}
+            limits, why = dart.live_limits({"subscription_start": "2026-11-20", "name": "x"}, "0" * 40)
+            self.assertEqual((why, limits["삼성증권"]["filing"]), (None, dart.REGISTRATION))
+            got = run.my_limit({"underwriters": [under("삼성증권", 5000, 6000)]}, {}, limits)
+            lines = report.my_limit_lines(got)
+            self.assertIn("100% 기준, 증권신고서", lines[0])
+            self.assertIn("증권신고서 청약한도가 아직 범위", lines[1])
+        finally:
+            dart.report_xml, dart.parse_limits = saved
+
+
+class TermsChangeTest(unittest.TestCase):
+    def rec(self, shares, price, broker="대신증권"):
+        return {"no": "1", "name": "가나", "final_price": price, "subscription_start": "2026-11-20",
+                "subscription_end": "2026-11-21", "my_limit": {"broker": broker, "shares": shares,
+                                                               "source": "prospectus", "multiplier": None,
+                                                               "base": shares, "filing": dart.PROSPECTUS}}
+
+    def test_what_counts_as_a_change(self):
+        old = run.alert_terms(self.rec(20000, 10000))
+        self.assertEqual(run.terms_changes(old, self.rec(20000, 10000))[0], [])
+        got = run.terms_changes(old, self.rec(24000, 11000))[0]
+        self.assertEqual([c[0] for c in got], ["청약한도", "확정공모가"])
+        self.assertEqual(got[0][1:], ("대신증권 20,000주", "대신증권 24,000주"))
+        # A brokerage change at the same figure is a change; a value gone missing is not.
+        self.assertEqual(len(run.terms_changes(old, self.rec(20000, 10000, "NH투자증권"))[0]), 1)
+        self.assertEqual(run.terms_changes(old, self.rec(None, None))[0], [])
+
+    def test_follow_up_email(self):
+        from ipo_radar import notify
+        sent = []
+        saved = notify.send_email
+        try:
+            notify.send_email = lambda subj, body, cfg: sent.append((subj, body)) or True
+            r = self.rec(24000, 11000)
+            changes = run.terms_changes(run.alert_terms(self.rec(20000, 10000)), r)[0]
+            self.assertTrue(notify.notify_terms_change(r, changes, cfg={"notify_email": True}))
+        finally:
+            notify.send_email = saved
+        subj, body = sent[0]
+        self.assertIn("[공모주 정정] 가나 — 청약한도, 확정공모가 변경", subj)
+        self.assertIn("대신증권 20,000주 → 대신증권 24,000주", body)
+        self.assertIn("132,000,000원", body)   # 24,000 x 11,000 x 50%
+
+
+class AttachWithoutDatasetTest(unittest.TestCase):
+    def test_my_limit_is_set_without_a_dataset(self):
+        saved = run.DATASET, dart.live_limits, dart.api_key
+        try:
+            run.DATASET = "/nonexistent/dataset.json"
+            dart.api_key = lambda: None
+            dart.live_limits = lambda rec, key: ({"KB증권": lim(9000)}, None)
+            results = [{"rec": {"no": "1", "underwriters": [under("KB증권", 9000, 11000)]},
+                        "verdict": {"verdict": "GO"}}]
+            run.attach_forecasts(results, {})
+        finally:
+            run.DATASET, dart.live_limits, dart.api_key = saved
+        self.assertEqual(results[0]["rec"]["my_limit"]["shares"], 9000)
+        self.assertNotIn("forecast", results[0])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -195,6 +195,7 @@ def my_limit(rec, cfg, limits=None, limits_note=None):
         else:
             shares = int(round(base * p / 100.0))
         cand = {"broker": name, "shares": int(shares), "source": "prospectus",
+                "filing": v.get("filing") or dart.PROSPECTUS,
                 "multiplier": float(pct) / 100.0 if pct else None, "base": base,
                 "l38": (u.get("limit_low"), u.get("limit_high")) if u else None}
         if v["base"][0] != v["base"][1]:
@@ -236,20 +237,48 @@ def my_limit(rec, cfg, limits=None, limits_note=None):
     return best
 
 
+def alert_terms(rec):
+    """What a GO alert told you: your 청약한도 (and where) and the 확정공모가."""
+    ml = rec.get("my_limit") or {}
+    return {"broker": ml.get("broker"), "shares": ml.get("shares"), "price": rec.get("final_price")}
+
+
+def terms_changes(old, rec):
+    """([(label, before, after)], current terms) -- what moved since the alert.
+
+    Only a change you would act on: a different 청약한도 or brokerage, or a
+    different 확정공모가. The source moving from 38 to the 투자설명서 at the
+    same figure is not one. A value that went missing is not a change either:
+    a sparse page on one run must not mail you a "정정".
+    """
+    now = alert_terms(rec)
+    if not old:
+        return [], now
+    out = []
+    if now["shares"] and old.get("shares") and (now["shares"], now["broker"]) != (old["shares"], old.get("broker")):
+        out.append(("청약한도", "%s %s주" % (old.get("broker"), "{:,}".format(old["shares"])),
+                    "%s %s주" % (now["broker"], "{:,}".format(now["shares"]))))
+    if now["price"] and old.get("price") and now["price"] != old["price"]:
+        out.append(("확정공모가", "{:,}원".format(old["price"]), "{:,}원".format(now["price"])))
+    return out, now
+
+
 def attach_forecasts(results, cfg=None):
     """Add an expected-net-won estimate to GO/WATCH deals, where we can.
 
-    Silently skipped when the historical dataset has not been built (it needs
-    one cached detail page per past deal -- see net_returns.py), so the daily
-    screen never depends on it.
+    Your own 청약한도 (``rec["my_limit"]``) is set on every GO/WATCH deal
+    first, whether or not a forecast follows: the alert email, calendar event
+    and 정정 follow-up all use it. Only the forecast itself is skipped when
+    the historical dataset has not been built (it needs one cached detail page
+    per past deal -- see net_returns.py), so the daily screen never depends on it.
     """
-    if not os.path.exists(DATASET):
-        return
-    try:
-        with open(DATASET, encoding="utf-8") as fh:
-            history = json.load(fh)
-    except ValueError:
-        return
+    history = None
+    if os.path.exists(DATASET):
+        try:
+            with open(DATASET, encoding="utf-8") as fh:
+                history = json.load(fh)
+        except ValueError:
+            history = None
     key = dart.api_key()
     for r in results:
         if r["verdict"]["verdict"] not in ("GO", "WATCH"):
@@ -264,6 +293,8 @@ def attach_forecasts(results, cfg=None):
         limits, why = dart.live_limits(rec, key)
         mine = my_limit(rec, cfg or {}, limits, why)
         rec["my_limit"] = mine
+        if history is None:
+            continue
         limit = mine["shares"] if mine else 0
         price, sub_end, refund = rec.get("final_price"), rec.get("subscription_end"), rec.get("refund_date")
         if not (limit and price and sub_end and refund and rec.get("institutional_ratio")):
@@ -389,10 +420,11 @@ def main():
         )
 
     # Only a new GO is worth interrupting for. net_returns.py measured WATCH at
-    # +2.30% excess return over 77 deals excluding one lucky outlier, against
-    # GO's +13% (2026-11-12) -- indistinguishable from leaving the
-    # cash alone, and that is before the friction of actually moving funds. So
-    # WATCH stays visible in the report and never raises a banner.
+    # +3.05% a year over the 3% the cash would earn idle (+2.30% without one
+    # lucky outlier, 이에스티), against GO's +13% (2026-11-12). That beats a
+    # CMA -- WATCH is a reasonable subscription for idle cash -- but it averages
+    # ~5.6만 a deal and is noisy, so it is not worth an interruption. WATCH
+    # stays visible in the report and never raises a banner.
     #
     # A GO is recorded in seen.json ONLY once its banner actually posted. The
     # entry is the record of a delivered alert, not of a deal we noticed: if
@@ -407,9 +439,26 @@ def main():
             no = r["rec"]["no"]
             if notify.notify_go(r["rec"], r["verdict"], report_path,
                                 cfg=cfg, fc=r.get("forecast")):
-                seen[no] = {"verdict": "GO", "name": r["rec"]["name"], "notified": run_date}
+                seen[no] = {"verdict": "GO", "name": r["rec"]["name"], "notified": run_date,
+                            "terms": alert_terms(r["rec"])}
             else:
                 failed.append(r)
+        # A 정정 after the alert: the 청약한도 or 확정공모가 you were told no
+        # longer holds. Once per change, until the 청약 closes.
+        fresh_nos = {r["rec"]["no"] for r in fresh}
+        for r in gos:
+            no = r["rec"]["no"]
+            entry = seen.get(no)
+            if no in fresh_nos or not entry or entry.get("verdict") != "GO":
+                continue
+            if (r["rec"].get("subscription_end") or "9999") < run_date:
+                continue
+            changes, now = terms_changes(entry.get("terms"), r["rec"])
+            if entry.get("terms") is None:
+                entry["terms"] = now   # alerted before terms were recorded: start from today
+            elif changes and notify.notify_terms_change(r["rec"], changes, report_path, cfg=cfg):
+                entry["terms"] = now
+                entry["changed"] = run_date
     save_seen(seen)
 
     # One banner per new warning. A wrong parse is as costly as a missed GO --
